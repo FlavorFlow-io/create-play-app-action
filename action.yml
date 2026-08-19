@@ -1,0 +1,183 @@
+name: FlavorFlow Create Play App
+description: >-
+  Creates a Google Play Console app for one FlavorFlow client on a self-hosted
+  runner. Runs unattended while the runner's Chrome session is valid, and
+  notifies someone to sign in when it is not.
+
+branding:
+  icon: play
+  color: purple
+
+inputs:
+  api-key:
+    description: 'FlavorFlow project API key — reads the client name and package name'
+    required: true
+  project-id:
+    description: 'FlavorFlow project id'
+    required: true
+  client-id:
+    description: 'FlavorFlow client id to create the Play app for'
+    required: true
+  app-name:
+    description: 'Override the app name (defaults to the client app name in FlavorFlow)'
+    required: false
+    default: ''
+  profile-dir:
+    description: >-
+      Chrome profile carrying the Google session. Must already be signed in to
+      Play Console — see the addon ci/README.md for the one-time setup.
+    required: false
+    default: '~/.config/google-chrome/gplay-automation-profile'
+  chrome-binary:
+    description: 'Path to the Chrome binary, when it is not on PATH'
+    required: false
+    default: ''
+  default-language:
+    description: 'Default store listing language'
+    required: false
+    default: 'en-US'
+  app-type:
+    description: 'app or game'
+    required: false
+    default: 'app'
+  pricing:
+    description: 'free or paid'
+    required: false
+    default: 'free'
+  api-base-url:
+    description: 'FlavorFlow API base URL'
+    required: false
+    default: 'https://api.flavorflow.io'
+  session-timeout:
+    description: 'Seconds a healthy stored session may take to reach the console'
+    required: false
+    default: '60'
+  login-timeout:
+    description: >-
+      Seconds to wait for someone to sign in on the runner when the session has
+      expired. This is the only step that needs a human.
+    required: false
+    default: '1800'
+  notify-interval:
+    description: 'Seconds between reminders while waiting for sign-in'
+    required: false
+    default: '300'
+  notify-webhook:
+    description: >-
+      Optional URL posted to with {"text": ...} when a sign-in is needed —
+      a Slack or Discord incoming webhook, for reaching someone not at the runner.
+    required: false
+    default: ''
+  notify-desktop:
+    description: 'Raise a desktop notification on the runner itself'
+    required: false
+    default: 'true'
+  headless:
+    description: >-
+      Run Chrome headless. Off by default — a headless window cannot be signed
+      in to, and Google challenges headless sessions far more often.
+    required: false
+    default: 'false'
+  dry-run:
+    description: 'Resolve the client and report what would happen, without a browser'
+    required: false
+    default: 'false'
+
+outputs:
+  app-id:
+    description: 'Play Console app id (empty when nothing was created)'
+    value: ${{ steps.create.outputs.app-id }}
+  created:
+    description: 'true when this run created the app, false when it already existed'
+    value: ${{ steps.create.outputs.created }}
+  developer-id:
+    description: 'Play Console developer id the app was created under'
+    value: ${{ steps.create.outputs.developer-id }}
+
+runs:
+  using: composite
+  steps:
+    # This action drives a real desktop browser against a signed-in Google
+    # session, which a GitHub-hosted runner can be neither of.
+    - name: Check runner is self-hosted
+      shell: bash
+      run: |
+        if [ "${RUNNER_ENVIRONMENT:-}" = "github-hosted" ]; then
+          echo "::error::This action needs a self-hosted runner with a signed-in Chrome profile."
+          exit 1
+        fi
+
+    # A venv rather than the system interpreter: Homebrew and modern distro
+    # pythons are externally managed (PEP 668) and refuse a plain pip install.
+    # Kept outside the workspace so it survives checkout cleaning.
+    - name: Set up Python environment
+      id: venv
+      shell: bash
+      run: |
+        set -euo pipefail
+        venv="${RUNNER_TOOL_CACHE:-$HOME/.cache}/flavorflow-play-venv"
+        [ -x "$venv/bin/python" ] || python3 -m venv "$venv"
+        "$venv/bin/python" -m pip install --quiet --disable-pip-version-check --upgrade pip selenium
+        echo "python=$venv/bin/python" >> "$GITHUB_OUTPUT"
+        "$venv/bin/python" -c 'import selenium; print("selenium", selenium.__version__)'
+
+    - name: Resolve Chrome
+      id: chrome
+      shell: bash
+      env:
+        CHROME_BINARY: ${{ inputs.chrome-binary }}
+      run: |
+        set -euo pipefail
+        candidates=(
+          "$CHROME_BINARY"
+          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          "$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          "$(command -v google-chrome || true)"
+          "$(command -v google-chrome-stable || true)"
+          "$(command -v chromium || true)"
+        )
+        found=""
+        for c in "${candidates[@]}"; do
+          if [ -n "$c" ] && [ -x "$c" ]; then found="$c"; break; fi
+        done
+        if [ -z "$found" ]; then
+          echo "::error::No Chrome found. Install Google Chrome on the runner, or set chrome-binary."
+          exit 1
+        fi
+        echo "Using $found"
+        "$found" --version || true
+        echo "binary=$found" >> "$GITHUB_OUTPUT"
+        # Selenium Manager fetches a matching chromedriver, so a missing one on
+        # PATH is worth a note rather than a failure.
+        command -v chromedriver >/dev/null 2>&1 \
+          && chromedriver --version \
+          || echo "chromedriver not on PATH — Selenium Manager will fetch one."
+
+    - name: Create the Play app
+      id: create
+      shell: bash
+      env:
+        FLAVORFLOW_API_KEY: ${{ inputs.api-key }}
+      run: |
+        set -euo pipefail
+        profile_dir=$(eval echo "${{ inputs.profile-dir }}")
+        args=(
+          --api-base "${{ inputs.api-base-url }}"
+          --project-id "${{ inputs.project-id }}"
+          --client-id "${{ inputs.client-id }}"
+          --profile-dir "$profile_dir"
+          --default-language "${{ inputs.default-language }}"
+          --app-type "${{ inputs.app-type }}"
+          --pricing "${{ inputs.pricing }}"
+          --session-timeout "${{ inputs.session-timeout }}"
+          --login-timeout "${{ inputs.login-timeout }}"
+          --notify-interval "${{ inputs.notify-interval }}"
+        )
+        [ -n "${{ inputs.notify-webhook }}" ] && args+=(--notify-webhook "${{ inputs.notify-webhook }}")
+        [ "${{ inputs.notify-desktop }}" = "false" ] && args+=(--no-desktop-notify)
+        [ -n "${{ inputs.app-name }}" ] && args+=(--app-name "${{ inputs.app-name }}")
+        args+=(--chrome-binary "${{ steps.chrome.outputs.binary }}")
+        [ "${{ inputs.headless }}" = "true" ] && args+=(--headless)
+        [ "${{ inputs.dry-run }}" = "true" ] && args+=(--dry-run)
+        "${{ steps.venv.outputs.python }}" "${{ github.action_path }}/ci_create_app.py" \
+          --repo-root "${{ github.action_path }}/automation" "${args[@]}"
