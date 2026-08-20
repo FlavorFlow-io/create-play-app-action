@@ -82,6 +82,24 @@ inputs:
     description: 'Resolve the client and report what would happen, without a browser'
     required: false
     default: 'false'
+  form:
+    description: >-
+      Play Console form to run after the app exists (e.g. internal_testing_form).
+      Leave empty to only create the app.
+    required: false
+    default: ''
+  form-params:
+    description: >-
+      Newline-separated k=v pairs bound to the form's {placeholders},
+      e.g. "listName=Internal testers\nemails=a@example.com"
+    required: false
+    default: ''
+  cli-version:
+    description: >-
+      Release tag of the form-cli distribution to use. Defaults to the newest
+      release of this action repo.
+    required: false
+    default: 'latest'
 
 outputs:
   app-id:
@@ -153,6 +171,52 @@ runs:
           && chromedriver --version \
           || echo "chromedriver not on PATH — Selenium Manager will fetch one."
 
+    # The form runner is published as a release asset here rather than vendored:
+    # it is a 47MB JVM distribution built from a private repo, so shipping the
+    # source would defeat the split and committing the binary would bloat git.
+    - name: Fetch the form runner
+      id: cli
+      if: inputs.form != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        VERSION: ${{ inputs.cli-version }}
+      run: |
+        set -euo pipefail
+        dest="$RUNNER_TEMP/form-cli"
+        rm -rf "$dest" && mkdir -p "$dest"
+        repo="FlavorFlow-io/create-play-app-action"
+        if [ "$VERSION" = "latest" ]; then
+          gh release download --repo "$repo" --pattern 'form-cli.zip' --dir "$dest"
+        else
+          gh release download "$VERSION" --repo "$repo" --pattern 'form-cli.zip' --dir "$dest"
+        fi
+        unzip -q "$dest/form-cli.zip" -d "$dest"
+        chmod +x "$dest/form-cli"
+        echo "path=$dest/form-cli" >> "$GITHUB_OUTPUT"
+        "$dest/form-cli" --list > /dev/null && echo "Form runner ready."
+
+    - name: Fetch saved form answers
+      id: answers
+      if: inputs.form != ''
+      shell: bash
+      env:
+        API_KEY: ${{ inputs.api-key }}
+      run: |
+        set -euo pipefail
+        # Answers live on the project, so a human fills them once in the desktop
+        # app instead of CI carrying them per client.
+        url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/form-answers"
+        body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
+        if [ -z "$body" ] || [ "$(jq -r '.data' <<<"$body")" = "null" ]; then
+          echo "::notice::No saved form answers for this project — the form runs with --param only."
+          echo "path=" >> "$GITHUB_OUTPUT"
+        else
+          jq -r '.data.answers_json' <<<"$body" > "$RUNNER_TEMP/form-answers.json"
+          echo "Loaded $(jq -r '.data.size_bytes' <<<"$body") bytes of saved answers."
+          echo "path=$RUNNER_TEMP/form-answers.json" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Create the Play app
       id: create
       shell: bash
@@ -181,3 +245,25 @@ runs:
         [ "${{ inputs.dry-run }}" = "true" ] && args+=(--dry-run)
         "${{ steps.venv.outputs.python }}" "${{ github.action_path }}/ci_create_app.py" \
           --repo-root "${{ github.action_path }}/automation" "${args[@]}"
+
+    - name: Run the Play Console form
+      if: inputs.form != ''
+      shell: bash
+      env:
+        FORM_PARAMS: ${{ inputs.form-params }}
+      run: |
+        set -euo pipefail
+        args=(--form "${{ inputs.form }}" --login-timeout "${{ inputs.login-timeout }}")
+        app_id="${{ steps.create.outputs.app-id }}"
+        [ -n "$app_id" ] && args+=(--app-id "$app_id")
+        [ -n "${{ steps.answers.outputs.path }}" ] && args+=(--answers "${{ steps.answers.outputs.path }}")
+        [ -n "${{ inputs.notify-webhook }}" ] && args+=(--notify-webhook "${{ inputs.notify-webhook }}")
+        while IFS= read -r pair; do
+          [ -n "$pair" ] && args+=(--param "$pair")
+        done <<< "$FORM_PARAMS"
+        "${{ steps.cli.outputs.path }}" "${args[@]}"
+
+    - name: Remove fetched answers
+      if: always() && inputs.form != ''
+      shell: bash
+      run: rm -f "$RUNNER_TEMP/form-answers.json"

@@ -72,11 +72,46 @@ google-chrome --user-data-dir="$PROFILE" --profile-directory=Default \
 Sign in, pick the developer account, confirm the URL becomes
 `.../developers/<id>/...`, then close Chrome fully so the profile is not locked.
 
+## Filling the console forms
+
+Creating the app is only the first step; the console then wants a dozen forms
+filled. Pass `form` to run one after the app exists:
+
+```yaml
+      - uses: FlavorFlow-io/create-play-app-action@v1
+        with:
+          api-key: ${{ secrets.FLAVORFLOW_API_KEY }}
+          project-id: ${{ vars.FLAVORFLOW_PROJECT_ID }}
+          client-id: ${{ inputs.client_id }}
+          form: internal_testing_form
+          form-params: |
+            listName=Internal testers
+            emails=qa@example.com
+            aab=${{ github.workspace }}/app-release.aab
+```
+
+Answers that belong to the project — privacy policy URL, content rating, target
+audience — are **not** passed here. They are saved once against the FlavorFlow
+project from the desktop addon and fetched at run time with the same project API
+key, so CI never carries them per client. `form-params` supplies only the values
+that genuinely differ per run, and overrides the saved answers where they
+overlap.
+
+Run the form runner with `--list` to see the available form ids.
+
 ## Where the code comes from
 
-`action.yml` and `ci_create_app.py` live here. The Play Console page flows in
-`automation/` are published from the private `google-play-automation` repo by its
-release process, so this repo can stay public and consumers need no token.
+`action.yml` and `ci_create_app.py` live here. Two things are published from the
+private `google-play-automation` repo by its release process, so this repo stays
+public and consumers need no token:
+
+- `automation/` — the Play Console page flows used by app creation.
+- `form-cli.zip` — a release asset holding the headless form runner, downloaded
+  on demand when `form` is set. It is the same interpreter and the same form
+  JSON the desktop app uses, so the two cannot drift.
+
+The runner ships without the desktop UI stack, which also drops skiko's
+per-platform natives — so one distribution runs on any OS with a JVM.
 
 ## Behaviour
 
