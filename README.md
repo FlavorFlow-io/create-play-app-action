@@ -78,6 +78,16 @@ Creating the app is only the first step; the console then wants a dozen forms
 filled. Pass `form` to run one after the app exists:
 
 ```yaml
+      # The bundle is built by another job, so it arrives as an artifact.
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: bundle-*
+          merge-multiple: true
+          path: bundle
+
+      - id: aab
+        run: echo "path=$(find bundle -name '*.aab' | head -1)" >> "$GITHUB_OUTPUT"
+
       - uses: FlavorFlow-io/create-play-app-action@v1
         with:
           api-key: ${{ secrets.FLAVORFLOW_API_KEY }}
@@ -87,8 +97,12 @@ filled. Pass `form` to run one after the app exists:
           form-params: |
             listName=Internal testers
             emails=qa@example.com
-            aab=${{ github.workspace }}/app-release.aab
+            aab=${{ steps.aab.outputs.path }}
 ```
+
+Creating the app is idempotent — a second invocation reports the existing app id
+rather than creating a duplicate — so it is safe to call this action again for
+the release after an earlier job created the app.
 
 Answers that belong to the project — privacy policy URL, content rating, target
 audience — are **not** passed here. They are saved once against the FlavorFlow
