@@ -357,6 +357,8 @@ runs:
       shell: bash
       env:
         FORM_PARAMS: ${{ inputs.form-params }}
+        SHORT_DESCRIPTION: ${{ steps.listing.outputs.short }}
+        FULL_DESCRIPTION: ${{ steps.listing.outputs.full }}
       run: |
         set -euo pipefail
         args=(--form "${{ inputs.form }}" --login-timeout "${{ inputs.login-timeout }}")
@@ -368,11 +370,12 @@ runs:
         # runner refuses the form rather than typing a placeholder into a listing.
         [ -n "${{ steps.client.outputs.contact_email }}" ] && \
           args+=(--param "contact_email=${{ steps.client.outputs.contact_email }}")
-        # The listing text is per project and may itself contain {app_name},
-        # which fillForm substitutes from the params above.
-        if [ -n "${{ steps.listing.outputs.short }}" ]; then
-          args+=(--param "short_description=${{ steps.listing.outputs.short }}")
-          args+=(--param "full_description=${{ steps.listing.outputs.full }}")
+        # Through the environment, not ${{ }}: the full description is
+        # multi-line, and expression interpolation pastes raw text straight into
+        # the script — breaking it, and letting listing copy run as shell.
+        if [ -n "${SHORT_DESCRIPTION:-}" ]; then
+          args+=(--param "short_description=$SHORT_DESCRIPTION")
+          args+=(--param "full_description=$FULL_DESCRIPTION")
         fi
         [ -n "${{ inputs.developer-id }}" ] && args+=(--developer-id "${{ inputs.developer-id }}")
         # Already resolved for the python path; the runner needs it just as much,
