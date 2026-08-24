@@ -84,8 +84,9 @@ inputs:
     default: 'false'
   form:
     description: >-
-      Play Console form to run after the app exists (e.g. internal_testing_form).
-      Leave empty to only create the app.
+      Forms to run: a single id, a comma-separated list, or "all" for every form
+      the saved answers cover — which includes creating the app. Leave empty to
+      use the older python create-only path.
     required: false
     default: ''
   form-params:
@@ -104,7 +105,7 @@ inputs:
 outputs:
   app-id:
     description: 'Play Console app id (empty when nothing was created)'
-    value: ${{ steps.create.outputs.app-id }}
+    value: ${{ steps.create.outputs.app-id || steps.forms.outputs.app-id }}
   created:
     description: 'true when this run created the app, false when it already existed'
     value: ${{ steps.create.outputs.created }}
@@ -196,6 +197,28 @@ runs:
         echo "path=$dest/form-cli" >> "$GITHUB_OUTPUT"
         "$dest/form-cli" --list > /dev/null && echo "Form runner ready."
 
+    - name: Resolve the client
+      id: client
+      if: inputs.form != ''
+      shell: bash
+      env:
+        API_KEY: ${{ inputs.api-key }}
+      run: |
+        set -euo pipefail
+        url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/clients"
+        body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url")
+        client=$(jq -e --arg id "${{ inputs.client-id }}" '.data[] | select(.id==$id)' <<<"$body") || {
+          echo "::error::No client ${{ inputs.client-id }} in project ${{ inputs.project-id }}."
+          jq -r '.data[] | "  \(.id)  \(.name)"' <<<"$body" >&2
+          exit 1
+        }
+        name=$(jq -r '.app_name // .name' <<<"$client")
+        pkg=$(jq -r '.package_name // ""' <<<"$client")
+        [ -n "${{ inputs.app-name }}" ] && name="${{ inputs.app-name }}"
+        echo "app_name=$name" >> "$GITHUB_OUTPUT"
+        echo "package_name=$pkg" >> "$GITHUB_OUTPUT"
+        echo "Client: $name ($pkg)"
+
     - name: Fetch saved form answers
       id: answers
       if: inputs.form != ''
@@ -217,8 +240,13 @@ runs:
           echo "path=$RUNNER_TEMP/form-answers.json" >> "$GITHUB_OUTPUT"
         fi
 
-    - name: Create the Play app
+    # Only when no form set is requested. With `form` set, create_app_form runs
+    # through the Kotlin runner instead — the same interpreter and the same JSON
+    # the desktop app and the nightly form checks use.
+    - name: Create the Play app (legacy python path)
       id: create
+      if: inputs.form == ''
+
       shell: bash
       env:
         FLAVORFLOW_API_KEY: ${{ inputs.api-key }}
@@ -252,7 +280,8 @@ runs:
         "${keep_awake[@]}" "${{ steps.venv.outputs.python }}" "${{ github.action_path }}/ci_create_app.py" \
           --repo-root "${{ github.action_path }}/automation" "${args[@]}"
 
-    - name: Run the Play Console form
+    - name: Run the Play Console forms
+      id: forms
       if: inputs.form != ''
       shell: bash
       env:
@@ -260,6 +289,12 @@ runs:
       run: |
         set -euo pipefail
         args=(--form "${{ inputs.form }}" --login-timeout "${{ inputs.login-timeout }}")
+        args+=(--app-name "${{ steps.client.outputs.app_name }}")
+        args+=(--param "app_name=${{ steps.client.outputs.app_name }}")
+        [ -n "${{ steps.client.outputs.package_name }}" ] && \
+          args+=(--param "package_name=${{ steps.client.outputs.package_name }}")
+        # Only from the legacy path; with `form` set the runner creates the app
+        # itself and resolves the id between forms.
         app_id="${{ steps.create.outputs.app-id }}"
         [ -n "$app_id" ] && args+=(--app-id "$app_id")
         [ -n "${{ steps.answers.outputs.path }}" ] && args+=(--answers "${{ steps.answers.outputs.path }}")
