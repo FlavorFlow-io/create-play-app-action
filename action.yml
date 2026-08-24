@@ -370,9 +370,9 @@ runs:
         # runner refuses the form rather than typing a placeholder into a listing.
         [ -n "${{ steps.client.outputs.contact_email }}" ] && \
           args+=(--param "contact_email=${{ steps.client.outputs.contact_email }}")
-        # Through the environment, not ${{ }}: the full description is
-        # multi-line, and expression interpolation pastes raw text straight into
-        # the script — breaking it, and letting listing copy run as shell.
+        # Through the environment rather than expression interpolation: the full
+        # description is multi-line, and interpolation pastes raw text straight
+        # into the script — breaking it, and letting listing copy run as shell.
         if [ -n "${SHORT_DESCRIPTION:-}" ]; then
           args+=(--param "short_description=$SHORT_DESCRIPTION")
           args+=(--param "full_description=$FULL_DESCRIPTION")
