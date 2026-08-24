@@ -95,6 +95,18 @@ inputs:
       e.g. "listName=Internal testers\nemails=a@example.com"
     required: false
     default: ''
+  developer-id:
+    description: >-
+      Play Console developer id. Supplying it skips Play's "Choose developer
+      account" screen, which otherwise waits for a click nobody is there to make.
+    required: false
+    default: ''
+  state-dir:
+    description: >-
+      Where remembered ids live. Defaults to ~/.flavorflow/gplay — deliberately
+      outside the workspace, which checkout wipes each run.
+    required: false
+    default: ''
   cli-version:
     description: >-
       Release tag of the form-cli distribution to use. Defaults to the newest
@@ -309,6 +321,8 @@ runs:
         # runner refuses the form rather than typing a placeholder into a listing.
         [ -n "${{ steps.client.outputs.contact_email }}" ] && \
           args+=(--param "contact_email=${{ steps.client.outputs.contact_email }}")
+        [ -n "${{ inputs.developer-id }}" ] && args+=(--developer-id "${{ inputs.developer-id }}")
+        [ -n "${{ inputs.state-dir }}" ] && args+=(--state-dir "${{ inputs.state-dir }}")
         # Only from the legacy path; with `form` set the runner creates the app
         # itself and resolves the id between forms.
         app_id="${{ steps.create.outputs.app-id }}"
