@@ -243,7 +243,13 @@ runs:
         args+=(--chrome-binary "${{ steps.chrome.outputs.binary }}")
         [ "${{ inputs.headless }}" = "true" ] && args+=(--headless)
         [ "${{ inputs.dry-run }}" = "true" ] && args+=(--dry-run)
-        "${{ steps.venv.outputs.python }}" "${{ github.action_path }}/ci_create_app.py" \
+        # Waiting for a sign-in can take half an hour, and an idle Mac sleeps
+        # long before that — which drops the runner's connection and fails the
+        # job with a network error that says nothing about sleep. caffeinate
+        # holds both idle and display assertions for exactly this command.
+        keep_awake=()
+        command -v caffeinate >/dev/null 2>&1 && keep_awake=(caffeinate -d -i)
+        "${keep_awake[@]}" "${{ steps.venv.outputs.python }}" "${{ github.action_path }}/ci_create_app.py" \
           --repo-root "${{ github.action_path }}/automation" "${args[@]}"
 
     - name: Run the Play Console form
@@ -261,7 +267,9 @@ runs:
         while IFS= read -r pair; do
           [ -n "$pair" ] && args+=(--param "$pair")
         done <<< "$FORM_PARAMS"
-        "${{ steps.cli.outputs.path }}" "${args[@]}"
+        keep_awake=()
+        command -v caffeinate >/dev/null 2>&1 && keep_awake=(caffeinate -d -i)
+        "${keep_awake[@]}" "${{ steps.cli.outputs.path }}" "${args[@]}"
 
     - name: Remove fetched answers
       if: always() && inputs.form != ''
