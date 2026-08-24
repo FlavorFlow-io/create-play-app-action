@@ -95,6 +95,13 @@ inputs:
       e.g. "listName=Internal testers\nemails=a@example.com"
     required: false
     default: ''
+  app-id:
+    description: >-
+      Play Console app id, when the app already exists. Creation is skipped and
+      the remaining forms run against it. Normally unnecessary — a created id is
+      remembered in state-dir — but needed to resume after a failed first run.
+    required: false
+    default: ''
   developer-id:
     description: >-
       Play Console developer id. Supplying it skips Play's "Choose developer
@@ -325,7 +332,7 @@ runs:
         [ -n "${{ inputs.state-dir }}" ] && args+=(--state-dir "${{ inputs.state-dir }}")
         # Only from the legacy path; with `form` set the runner creates the app
         # itself and resolves the id between forms.
-        app_id="${{ steps.create.outputs.app-id }}"
+        app_id="${{ inputs.app-id || steps.create.outputs.app-id }}"
         [ -n "$app_id" ] && args+=(--app-id "$app_id")
         [ -n "${{ steps.answers.outputs.path }}" ] && args+=(--answers "${{ steps.answers.outputs.path }}")
         [ -n "${{ inputs.notify-webhook }}" ] && args+=(--notify-webhook "${{ inputs.notify-webhook }}")
