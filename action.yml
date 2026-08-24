@@ -214,10 +214,12 @@ runs:
         }
         name=$(jq -r '.app_name // .name' <<<"$client")
         pkg=$(jq -r '.package_name // ""' <<<"$client")
+        email=$(jq -r '.contact_email // ""' <<<"$client")
         [ -n "${{ inputs.app-name }}" ] && name="${{ inputs.app-name }}"
         echo "app_name=$name" >> "$GITHUB_OUTPUT"
         echo "package_name=$pkg" >> "$GITHUB_OUTPUT"
-        echo "Client: $name ($pkg)"
+        echo "contact_email=$email" >> "$GITHUB_OUTPUT"
+        echo "Client: $name ($pkg) <${email:-no support email}>"
 
     - name: Fetch saved form answers
       id: answers
@@ -293,6 +295,10 @@ runs:
         args+=(--param "app_name=${{ steps.client.outputs.app_name }}")
         [ -n "${{ steps.client.outputs.package_name }}" ] && \
           args+=(--param "package_name=${{ steps.client.outputs.package_name }}")
+        # Resolves the {contact_email} the saved answers carry. Without it the
+        # runner refuses the form rather than typing a placeholder into a listing.
+        [ -n "${{ steps.client.outputs.contact_email }}" ] && \
+          args+=(--param "contact_email=${{ steps.client.outputs.contact_email }}")
         # Only from the legacy path; with `form` set the runner creates the app
         # itself and resolves the id between forms.
         app_id="${{ steps.create.outputs.app-id }}"
