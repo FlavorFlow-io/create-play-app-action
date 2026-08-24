@@ -329,6 +329,9 @@ runs:
         [ -n "${{ steps.client.outputs.contact_email }}" ] && \
           args+=(--param "contact_email=${{ steps.client.outputs.contact_email }}")
         [ -n "${{ inputs.developer-id }}" ] && args+=(--developer-id "${{ inputs.developer-id }}")
+        # Already resolved for the python path; the runner needs it just as much,
+        # since ChromeDriver cannot find Chrome on macOS by itself.
+        args+=(--chrome-binary "${{ steps.chrome.outputs.binary }}")
         [ -n "${{ inputs.state-dir }}" ] && args+=(--state-dir "${{ inputs.state-dir }}")
         # Only from the legacy path; with `form` set the runner creates the app
         # itself and resolves the id between forms.
