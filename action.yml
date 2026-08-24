@@ -258,6 +258,29 @@ runs:
         echo "contact_email=$email" >> "$GITHUB_OUTPUT"
         echo "Client: $name ($pkg) <${email:-no support email}>"
 
+    - name: Fetch the store-listing template
+      id: listing
+      if: inputs.form != ''
+      shell: bash
+      env:
+        API_KEY: ${{ inputs.api-key }}
+      run: |
+        set -euo pipefail
+        url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/store-listing"
+        body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
+        if [ -z "$body" ] || [ "$(jq -r '.data' <<<"$body")" = "null" ]; then
+          echo "::notice::No store-listing template on this project — store_listing_form will be skipped."
+          echo "short=" >> "$GITHUB_OUTPUT"
+          echo "full=" >> "$GITHUB_OUTPUT"
+        else
+          # Multi-line values need a heredoc delimiter, not key=value.
+          {
+            echo "short<<FF_EOF"; jq -r '.data.short_description' <<<"$body"; echo "FF_EOF"
+            echo "full<<FF_EOF";  jq -r '.data.full_description'  <<<"$body"; echo "FF_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Loaded the store-listing template."
+        fi
+
     - name: Fetch saved form answers
       id: answers
       if: inputs.form != ''
@@ -276,6 +299,15 @@ runs:
         else
           jq -r '.data.answers_json' <<<"$body" > "$RUNNER_TEMP/form-answers.json"
           echo "Loaded $(jq -r '.data.size_bytes' <<<"$body") bytes of saved answers."
+          # Without a listing template there is nothing to write, and the store
+          # listing form's answers are all placeholders — leaving it in would
+          # fail the run on unresolved values rather than simply skipping it.
+          if [ -z "${{ steps.listing.outputs.short }}" ]; then
+            tmp=$(mktemp)
+            jq 'del(.forms.store_listing_form)' "$RUNNER_TEMP/form-answers.json" > "$tmp" \
+              && mv "$tmp" "$RUNNER_TEMP/form-answers.json"
+            echo "::notice::Dropped store_listing_form — this project has no listing template."
+          fi
           echo "path=$RUNNER_TEMP/form-answers.json" >> "$GITHUB_OUTPUT"
         fi
 
@@ -336,6 +368,12 @@ runs:
         # runner refuses the form rather than typing a placeholder into a listing.
         [ -n "${{ steps.client.outputs.contact_email }}" ] && \
           args+=(--param "contact_email=${{ steps.client.outputs.contact_email }}")
+        # The listing text is per project and may itself contain {app_name},
+        # which fillForm substitutes from the params above.
+        if [ -n "${{ steps.listing.outputs.short }}" ]; then
+          args+=(--param "short_description=${{ steps.listing.outputs.short }}")
+          args+=(--param "full_description=${{ steps.listing.outputs.full }}")
+        fi
         [ -n "${{ inputs.developer-id }}" ] && args+=(--developer-id "${{ inputs.developer-id }}")
         # Already resolved for the python path; the runner needs it just as much,
         # since ChromeDriver cannot find Chrome on macOS by itself.
