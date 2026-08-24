@@ -102,6 +102,14 @@ inputs:
       remembered in state-dir — but needed to resume after a failed first run.
     required: false
     default: ''
+  close-existing-chrome:
+    description: >-
+      Close a Chrome left holding the automation profile by a cancelled run,
+      instead of stopping. Only that process — identified by the profile in its
+      command line — is ever closed. Nothing is lost: the session lives in the
+      profile on disk.
+    required: false
+    default: 'true'
   developer-id:
     description: >-
       Play Console developer id. Supplying it skips Play's "Choose developer
@@ -300,6 +308,7 @@ runs:
         [ "${{ inputs.notify-desktop }}" = "false" ] && args+=(--no-desktop-notify)
         [ -n "${{ inputs.app-name }}" ] && args+=(--app-name "${{ inputs.app-name }}")
         args+=(--chrome-binary "${{ steps.chrome.outputs.binary }}")
+        [ "${{ inputs.close-existing-chrome }}" = "true" ] && args+=(--close-existing-chrome)
         [ "${{ inputs.headless }}" = "true" ] && args+=(--headless)
         [ "${{ inputs.dry-run }}" = "true" ] && args+=(--dry-run)
         # Waiting for a sign-in can take half an hour, and an idle Mac sleeps
