@@ -172,6 +172,16 @@ runs:
           && chromedriver --version \
           || echo "chromedriver not on PATH — Selenium Manager will fetch one."
 
+    # The runner is a JVM program, and a self-hosted Mac has no JDK on PATH by
+    # default — the launcher then fails with "Unable to locate a Java Runtime".
+    # 17 matches the toolchain the distribution is built with.
+    - name: Set up Java
+      if: inputs.form != ''
+      uses: actions/setup-java@v5
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
     # The form runner is published as a release asset here rather than vendored:
     # it is a 47MB JVM distribution built from a private repo, so shipping the
     # source would defeat the split and committing the binary would bloat git.
