@@ -110,6 +110,13 @@ inputs:
       profile on disk.
     required: false
     default: 'true'
+  force-create:
+    description: >-
+      Create a new Play app even when one is remembered for this app name. A
+      package name cannot be changed after creation, so an app created with the
+      wrong one can only be replaced.
+    required: false
+    default: 'false'
   developer-id:
     description: >-
       Play Console developer id. Supplying it skips Play's "Choose developer
@@ -382,6 +389,7 @@ runs:
         # since ChromeDriver cannot find Chrome on macOS by itself.
         args+=(--chrome-binary "${{ steps.chrome.outputs.binary }}")
         [ "${{ inputs.close-existing-chrome }}" = "true" ] && args+=(--close-existing-chrome)
+        [ "${{ inputs.force-create }}" = "true" ] && args+=(--force-create)
         [ -n "${{ inputs.state-dir }}" ] && args+=(--state-dir "${{ inputs.state-dir }}")
         # Only from the legacy path; with `form` set the runner creates the app
         # itself and resolves the id between forms.
