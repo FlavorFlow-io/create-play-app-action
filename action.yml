@@ -308,7 +308,6 @@ runs:
         [ "${{ inputs.notify-desktop }}" = "false" ] && args+=(--no-desktop-notify)
         [ -n "${{ inputs.app-name }}" ] && args+=(--app-name "${{ inputs.app-name }}")
         args+=(--chrome-binary "${{ steps.chrome.outputs.binary }}")
-        [ "${{ inputs.close-existing-chrome }}" = "true" ] && args+=(--close-existing-chrome)
         [ "${{ inputs.headless }}" = "true" ] && args+=(--headless)
         [ "${{ inputs.dry-run }}" = "true" ] && args+=(--dry-run)
         # Waiting for a sign-in can take half an hour, and an idle Mac sleeps
@@ -341,6 +340,7 @@ runs:
         # Already resolved for the python path; the runner needs it just as much,
         # since ChromeDriver cannot find Chrome on macOS by itself.
         args+=(--chrome-binary "${{ steps.chrome.outputs.binary }}")
+        [ "${{ inputs.close-existing-chrome }}" = "true" ] && args+=(--close-existing-chrome)
         [ -n "${{ inputs.state-dir }}" ] && args+=(--state-dir "${{ inputs.state-dir }}")
         # Only from the legacy path; with `form` set the runner creates the app
         # itself and resolves the id between forms.
