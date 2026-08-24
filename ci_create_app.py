@@ -27,6 +27,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# Going to the console home while signed out lands on the public /console/about
+# marketing page, which never becomes a login form on its own. This URL forces a
+# real sign-in screen, and passive=true means an existing session is redirected
+# straight through to the console instead.
+SIGNIN_URL = (
+    "https://accounts.google.com/ServiceLogin?service=androiddeveloper&passive=true"
+    "&continue=https%3A%2F%2Fplay.google.com%2Fconsole%2Fdeveloper%2F"
+)
 CONSOLE_HOME = "https://play.google.com/console/developers"
 # Grace period before alerting when the console was merely slow rather than
 # explicitly asking for a login.
@@ -171,8 +179,13 @@ def _developer_id_from(url):
     return match.group(1) if match else None
 
 
+# /console/about and /console/signup are the signed-out landing pages; they look
+# like the console but are not, and sitting on one means nobody is signed in.
+_SIGNED_OUT_MARKERS = ("accounts.google.com", "/signin", "/console/about", "/console/signup")
+
+
 def _needs_login(url):
-    return "accounts.google.com" in (url or "") or "/signin" in (url or "")
+    return any(marker in (url or "") for marker in _SIGNED_OUT_MARKERS)
 
 
 def resolve_developer_id(driver, opts):
@@ -186,7 +199,7 @@ def resolve_developer_id(driver, opts):
     the runner. It re-notifies periodically, because a single notification sent
     while nobody was looking is the same as none.
     """
-    driver.get(CONSOLE_HOME)
+    driver.get(SIGNIN_URL)
 
     saw_login_page = False
     deadline = time.time() + opts.session_timeout
@@ -211,6 +224,13 @@ def resolve_developer_id(driver, opts):
             "The Google session has expired and Chrome is headless, so nobody can sign in.",
             "Re-run with headless disabled (the default), or sign in on the runner first.",
         )
+
+    try:
+        if _needs_login(driver.current_url) and "accounts.google.com" not in driver.current_url:
+            # Landed on a signed-out console page; send it to the actual form.
+            driver.get(SIGNIN_URL)
+    except Exception:
+        pass
 
     try:
         # Put the window where a passer-by will actually notice it.
