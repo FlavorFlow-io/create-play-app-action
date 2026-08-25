@@ -110,6 +110,12 @@ inputs:
       profile on disk.
     required: false
     default: 'true'
+  verify:
+    description: >-
+      After filling, print the console's own task list. A form reporting success
+      is not the same as Play counting the task as done.
+    required: false
+    default: 'true'
   force-create:
     description: >-
       Create a new Play app even when one is remembered for this app name. A
@@ -390,6 +396,7 @@ runs:
         args+=(--chrome-binary "${{ steps.chrome.outputs.binary }}")
         [ "${{ inputs.close-existing-chrome }}" = "true" ] && args+=(--close-existing-chrome)
         [ "${{ inputs.force-create }}" = "true" ] && args+=(--force-create)
+        [ "${{ inputs.verify }}" = "true" ] && args+=(--verify)
         [ -n "${{ inputs.state-dir }}" ] && args+=(--state-dir "${{ inputs.state-dir }}")
         # Only from the legacy path; with `form` set the runner creates the app
         # itself and resolves the id between forms.
