@@ -110,6 +110,13 @@ inputs:
       profile on disk.
     required: false
     default: 'true'
+  content-rating:
+    description: >-
+      Pre-answer the IARC questionnaire. Only "no" is supported — the answer set
+      for an app with none of the rated content. Empty leaves it unanswered, and
+      the content-rating task then cannot complete.
+    required: false
+    default: 'no'
   verify:
     description: >-
       After filling, print the console's own task list. A form reporting success
@@ -397,6 +404,7 @@ runs:
         [ "${{ inputs.close-existing-chrome }}" = "true" ] && args+=(--close-existing-chrome)
         [ "${{ inputs.force-create }}" = "true" ] && args+=(--force-create)
         [ "${{ inputs.verify }}" = "true" ] && args+=(--verify)
+        [ -n "${{ inputs.content-rating }}" ] && args+=(--content-rating "${{ inputs.content-rating }}")
         [ -n "${{ inputs.state-dir }}" ] && args+=(--state-dir "${{ inputs.state-dir }}")
         # Only from the legacy path; with `form` set the runner creates the app
         # itself and resolves the id between forms.
