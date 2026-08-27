@@ -329,7 +329,11 @@ runs:
         set -euo pipefail
         # Answers live on the project, so a human fills them once in the desktop
         # app instead of CI carrying them per client.
-        url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/form-answers"
+        # Scoped to the client so its own overrides win over the project's
+        # answers. The API resolves that — asking for the project's and merging
+        # here would put a second implementation of the precedence rule on the
+        # runner, free to disagree with the one the web app shows.
+        url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/form-answers?client_id=${{ inputs.client-id }}"
         body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
         if [ -z "$body" ] || [ "$(jq -r '.data' <<<"$body")" = "null" ]; then
           echo "::notice::No saved form answers for this project — the form runs with --param only."
@@ -337,6 +341,10 @@ runs:
         else
           jq -r '.data.answers_json' <<<"$body" > "$RUNNER_TEMP/form-answers.json"
           echo "Loaded $(jq -r '.data.size_bytes' <<<"$body") bytes of saved answers."
+          overridden=$(jq -r '(.data.overridden // []) | length' <<<"$body")
+          if [ "$overridden" != "0" ]; then
+            echo "Applying $overridden client override(s): $(jq -r '(.data.overridden // []) | join(", ")' <<<"$body")"
+          fi
           # Without a listing template there is nothing to write, and the store
           # listing form's answers are all placeholders — leaving it in would
           # fail the run on unresolved values rather than simply skipping it.
