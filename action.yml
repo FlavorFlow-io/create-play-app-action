@@ -123,6 +123,24 @@ inputs:
       is not the same as Play counting the task as done.
     required: false
     default: 'true'
+  publish-to-production:
+    description: >-
+      After the forms above, promote the release to production: the console
+      flow that creates the production draft, gives it countries, and rolls it
+      out. Off by default, and deliberately so — everything else this action
+      does is reversible, and this is not.
+
+      Requires a release already published to internal testing, which is what
+      Play promotes from.
+    required: false
+    default: 'false'
+  countries:
+    description: >-
+      Countries for the production release, as the console spells them, comma
+      separated. Blank means every country. Only read when
+      publish-to-production is on.
+    required: false
+    default: ''
   force-create:
     description: >-
       Create a new Play app even when one is remembered for this app name. A
@@ -223,7 +241,7 @@ runs:
     # default — the launcher then fails with "Unable to locate a Java Runtime".
     # 17 matches the toolchain the distribution is built with.
     - name: Set up Java
-      if: inputs.form != ''
+      if: inputs.form != '' || inputs.publish-to-production == 'true'
       uses: actions/setup-java@v5
       with:
         distribution: 'temurin'
@@ -234,7 +252,7 @@ runs:
     # source would defeat the split and committing the binary would bloat git.
     - name: Fetch the form runner
       id: cli
-      if: inputs.form != ''
+      if: inputs.form != '' || inputs.publish-to-production == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -256,7 +274,7 @@ runs:
 
     - name: Resolve the client
       id: client
-      if: inputs.form != ''
+      if: inputs.form != '' || inputs.publish-to-production == 'true'
       shell: bash
       env:
         API_KEY: ${{ inputs.api-key }}
@@ -280,7 +298,7 @@ runs:
 
     - name: Fetch the store-listing template
       id: listing
-      if: inputs.form != ''
+      if: inputs.form != '' || inputs.publish-to-production == 'true'
       shell: bash
       env:
         API_KEY: ${{ inputs.api-key }}
@@ -303,7 +321,7 @@ runs:
 
     - name: Fetch saved form answers
       id: answers
-      if: inputs.form != ''
+      if: inputs.form != '' || inputs.publish-to-production == 'true'
       shell: bash
       env:
         API_KEY: ${{ inputs.api-key }}
@@ -336,7 +354,7 @@ runs:
     # the desktop app and the nightly form checks use.
     - name: Create the Play app (legacy python path)
       id: create
-      if: inputs.form == ''
+      if: inputs.form == '' && inputs.publish-to-production != 'true'
 
       shell: bash
       env:
@@ -373,7 +391,7 @@ runs:
 
     - name: Run the Play Console forms
       id: forms
-      if: inputs.form != ''
+      if: inputs.form != '' || inputs.publish-to-production == 'true'
       shell: bash
       env:
         FORM_PARAMS: ${{ inputs.form-params }}
@@ -381,7 +399,10 @@ runs:
         FULL_DESCRIPTION: ${{ steps.listing.outputs.full }}
       run: |
         set -euo pipefail
-        args=(--form "${{ inputs.form }}" --login-timeout "${{ inputs.login-timeout }}")
+        # --form is not in here: production runs as a second invocation, and
+        # "all" cannot simply have forms appended to it — it means "every form
+        # the answers cover", not an entry in a list.
+        args=(--login-timeout "${{ inputs.login-timeout }}")
         args+=(--app-name "${{ steps.client.outputs.app_name }}")
         args+=(--param "app_name=${{ steps.client.outputs.app_name }}")
         [ -n "${{ steps.client.outputs.package_name }}" ] && \
@@ -397,6 +418,7 @@ runs:
           args+=(--param "short_description=$SHORT_DESCRIPTION")
           args+=(--param "full_description=$FULL_DESCRIPTION")
         fi
+        [ -n "${{ inputs.countries }}" ] && args+=(--param "countries=${{ inputs.countries }}")
         [ -n "${{ inputs.developer-id }}" ] && args+=(--developer-id "${{ inputs.developer-id }}")
         # Already resolved for the python path; the runner needs it just as much,
         # since ChromeDriver cannot find Chrome on macOS by itself.
@@ -417,9 +439,29 @@ runs:
         done <<< "$FORM_PARAMS"
         keep_awake=()
         command -v caffeinate >/dev/null 2>&1 && keep_awake=(caffeinate -d -i)
-        "${keep_awake[@]}" "${{ steps.cli.outputs.path }}" "${args[@]}"
+
+        run_forms() {
+          local forms="$1"; shift
+          echo "--- running: $forms"
+          "${keep_awake[@]}" "${{ steps.cli.outputs.path }}" --form "$forms" "${args[@]}" "$@"
+        }
+
+        if [ -n "${{ inputs.form }}" ]; then
+          run_forms "${{ inputs.form }}"
+        fi
+
+        if [ "${{ inputs.publish-to-production }}" = "true" ]; then
+          # Three forms, in this order: promote creates the production draft,
+          # countries fills the one field a production release cannot go
+          # without, and release rolls it out. The rollout itself is behind
+          # --param publish_to_production, so passing the forms alone would
+          # stop on the review page.
+          echo "::warning::Promoting ${{ steps.client.outputs.package_name }} to production. This is public and cannot be undone."
+          run_forms promote_to_production_form,production_countries_form,production_release_form \
+            --param publish_to_production=1
+        fi
 
     - name: Remove fetched answers
-      if: always() && inputs.form != ''
+      if: always() && (inputs.form != '' || inputs.publish-to-production == 'true')
       shell: bash
       run: rm -f "$RUNNER_TEMP/form-answers.json"
