@@ -405,6 +405,10 @@ runs:
         FORM_PARAMS: ${{ inputs.form-params }}
         SHORT_DESCRIPTION: ${{ steps.listing.outputs.short }}
         FULL_DESCRIPTION: ${{ steps.listing.outputs.full }}
+        # Through the environment rather than interpolation, so the key is not
+        # pasted into the script text — and it has to be here at all, because
+        # progress reporting needs it and this step had no API_KEY.
+        API_KEY: ${{ inputs.api-key }}
       run: |
         set -euo pipefail
         # --form is not in here: production runs as a second invocation, and
@@ -427,6 +431,13 @@ runs:
           args+=(--param "full_description=$FULL_DESCRIPTION")
         fi
         [ -n "${{ inputs.countries }}" ] && args+=(--param "countries=${{ inputs.countries }}")
+        # Report progress back to FlavorFlow as each form completes. The whole
+        # run is one CI step, so without this there is nothing to look at for
+        # twenty minutes but a spinner.
+        args+=(--progress-api "${{ inputs.api-base-url }}")
+        args+=(--progress-key "$API_KEY")
+        args+=(--progress-project "${{ inputs.project-id }}")
+        args+=(--progress-client "${{ inputs.client-id }}")
         [ -n "${{ inputs.developer-id }}" ] && args+=(--developer-id "${{ inputs.developer-id }}")
         # Already resolved for the python path; the runner needs it just as much,
         # since ChromeDriver cannot find Chrome on macOS by itself.
