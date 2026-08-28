@@ -397,6 +397,51 @@ runs:
         "${keep_awake[@]}" "${{ steps.venv.outputs.python }}" "${{ github.action_path }}/ci_create_app.py" \
           --repo-root "${{ github.action_path }}/automation" "${args[@]}"
 
+    # Stop before the browser, not after. A run that creates an app and then
+    # cannot complete it leaves a half-configured app behind that has to be
+    # sorted out by hand, and Play will not let a package name be reused.
+    - name: Check the project can actually publish
+      if: inputs.form != '' || inputs.publish-to-production == 'true'
+      shell: bash
+      env:
+        API_KEY: ${{ inputs.api-key }}
+        FORM_PARAMS: ${{ inputs.form-params }}
+        ANSWERS: ${{ steps.answers.outputs.path }}
+      run: |
+        set -euo pipefail
+        url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/publish-readiness"
+        body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
+        if [ -z "$body" ]; then
+          echo "::warning::Could not check publish readiness — continuing."
+          exit 0
+        fi
+        missing=$(jq -r '(.data.missing // []) | map(.label) | join(", ")' <<<"$body")
+        if [ -n "$missing" ]; then
+          echo "::error::This project has no answers for required Play Console tasks: $missing."
+          echo "Fill them in FlavorFlow (project → Play forms) before publishing."
+          jq -r '(.data.missing // [])[] | select(.note) | "  - \(.label): \(.note)"' <<<"$body"
+          exit 1
+        fi
+
+        # Data safety is answered by importing a CSV rather than by clicking
+        # through the questionnaire, so the answers covering it is not enough —
+        # the file has to exist on this runner.
+        if [ -n "${ANSWERS:-}" ] && jq -e '.forms.data_privacy_security' "$ANSWERS" >/dev/null 2>&1; then
+          csv=$(printf '%s\n' "$FORM_PARAMS" | sed -n 's/^csv_file=//p' | head -1)
+          if [ -z "$csv" ]; then
+            echo "::error::Data safety is required for this project, but no csv_file was passed to this action."
+            echo "Pass form-params: csv_file=<path to the Play Console Data safety CSV export>."
+            exit 1
+          fi
+          if [ ! -f "$csv" ]; then
+            echo "::error::Data safety CSV not found at '$csv'."
+            echo "The path is read on the runner — check it was checked out or downloaded first."
+            exit 1
+          fi
+          echo "Data safety CSV: $csv ($(wc -c <"$csv" | tr -d ' ') bytes)"
+        fi
+        echo "Publish readiness: all required tasks have answers."
+
     - name: Run the Play Console forms
       id: forms
       if: inputs.form != '' || inputs.publish-to-production == 'true'
