@@ -400,6 +400,40 @@ runs:
     # Stop before the browser, not after. A run that creates an app and then
     # cannot complete it leaves a half-configured app behind that has to be
     # sorted out by hand, and Play will not let a package name be reused.
+    # Some answers are files — the Data safety CSV is imported rather than
+    # typed. They live with the project's answers in FlavorFlow, so they are
+    # fetched here rather than being expected somewhere on the runner.
+    - name: Fetch files the forms are answered with
+      id: formfiles
+      if: inputs.form != '' || inputs.publish-to-production == 'true'
+      shell: bash
+      env:
+        API_KEY: ${{ inputs.api-key }}
+        ANSWERS: ${{ steps.answers.outputs.path }}
+      run: |
+        set -euo pipefail
+        params=""
+        # Only data_privacy_security today; the loop is here so a second
+        # file-answered form needs a list entry rather than another step.
+        for pair in "data_privacy_security:csv_file:csv"; do
+          form="${pair%%:*}"; rest="${pair#*:}"; input="${rest%%:*}"; ext="${rest##*:}"
+          [ -n "${ANSWERS:-}" ] || continue
+          jq -e ".forms.\"$form\"" "$ANSWERS" >/dev/null 2>&1 || continue
+          url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/form-files/$input"
+          body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
+          if [ -z "$body" ] || [ "$(jq -r '.data' <<<"$body")" = "null" ]; then
+            echo "::warning::No uploaded file for $input — $form cannot be filled."
+            continue
+          fi
+          dest="$RUNNER_TEMP/$input.$ext"
+          jq -r '.data.content' <<<"$body" > "$dest"
+          echo "$input: $(jq -r '.data.filename' <<<"$body") ($(wc -c <"$dest" | tr -d ' ') bytes)"
+          params="${params}${input}=${dest}"$'\n'
+        done
+        # Through a file rather than an output: these are paths, but the block
+        # is multi-line and outputs mangle that.
+        printf '%s' "$params" > "$RUNNER_TEMP/form-file-params.txt"
+
     - name: Check the project can actually publish
       if: inputs.form != '' || inputs.publish-to-production == 'true'
       shell: bash
@@ -419,28 +453,12 @@ runs:
         if [ -n "$missing" ]; then
           echo "::error::This project has no answers for required Play Console tasks: $missing."
           echo "Fill them in FlavorFlow (project → Play forms) before publishing."
+          echo "A task listed here may have answers but be missing a file it is answered with."
           jq -r '(.data.missing // [])[] | select(.note) | "  - \(.label): \(.note)"' <<<"$body"
           exit 1
         fi
 
-        # Data safety is answered by importing a CSV rather than by clicking
-        # through the questionnaire, so the answers covering it is not enough —
-        # the file has to exist on this runner.
-        if [ -n "${ANSWERS:-}" ] && jq -e '.forms.data_privacy_security' "$ANSWERS" >/dev/null 2>&1; then
-          csv=$(printf '%s\n' "$FORM_PARAMS" | sed -n 's/^csv_file=//p' | head -1)
-          if [ -z "$csv" ]; then
-            echo "::error::Data safety is required for this project, but no csv_file was passed to this action."
-            echo "Pass form-params: csv_file=<path to the Play Console Data safety CSV export>."
-            exit 1
-          fi
-          if [ ! -f "$csv" ]; then
-            echo "::error::Data safety CSV not found at '$csv'."
-            echo "The path is read on the runner — check it was checked out or downloaded first."
-            exit 1
-          fi
-          echo "Data safety CSV: $csv ($(wc -c <"$csv" | tr -d ' ') bytes)"
-        fi
-        echo "Publish readiness: all required tasks have answers."
+        echo "Publish readiness: every required task has answers, and the files they need are uploaded."
 
     - name: Run the Play Console forms
       id: forms
@@ -501,6 +519,13 @@ runs:
         while IFS= read -r pair; do
           [ -n "$pair" ] && args+=(--param "$pair")
         done <<< "$FORM_PARAMS"
+        # Files fetched from FlavorFlow, added after the caller's params so an
+        # explicit path still wins.
+        if [ -f "$RUNNER_TEMP/form-file-params.txt" ]; then
+          while IFS= read -r pair; do
+            [ -n "$pair" ] && args+=(--param "$pair")
+          done < "$RUNNER_TEMP/form-file-params.txt"
+        fi
         keep_awake=()
         command -v caffeinate >/dev/null 2>&1 && keep_awake=(caffeinate -d -i)
 
