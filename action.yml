@@ -134,6 +134,14 @@ inputs:
       Play promotes from.
     required: false
     default: 'false'
+  data-safety-csv:
+    description: >-
+      Path to the Play Console Data safety CSV export, when it lives in the
+      repository rather than being uploaded to FlavorFlow. Optional: without it
+      the file uploaded against the project is used. Supplying it wins, so a
+      repo copy can override the uploaded one.
+    required: false
+    default: ''
   countries:
     description: >-
       Countries for the production release, as the console spells them, comma
@@ -410,6 +418,7 @@ runs:
       env:
         API_KEY: ${{ inputs.api-key }}
         ANSWERS: ${{ steps.answers.outputs.path }}
+        CSV_PATH: ${{ steps.csv.outputs.path }}
       run: |
         set -euo pipefail
         params=""
@@ -417,13 +426,21 @@ runs:
         # file-answered form needs a list entry rather than another step.
         for pair in "data_privacy_security:csv_file:csv"; do
           form="${pair%%:*}"; rest="${pair#*:}"; input="${rest%%:*}"; ext="${rest##*:}"
+          # Nothing to fetch when the caller brought its own.
+          if [ "$input" = "csv_file" ] && [ -n "${CSV_PATH:-}" ]; then continue; fi
           [ -n "${ANSWERS:-}" ] || continue
           jq -e ".forms.\"$form\"" "$ANSWERS" >/dev/null 2>&1 || continue
           url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/form-files/$input"
           body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
           if [ -z "$body" ] || [ "$(jq -r '.data' <<<"$body")" = "null" ]; then
-            echo "::warning::No uploaded file for $input — $form cannot be filled."
-            continue
+            # Neither source has it: no path was passed and nothing is uploaded.
+            # Stop here rather than opening a browser — $form is required to
+            # publish, and a run that creates an app it cannot complete leaves a
+            # package name that can never be reused.
+            echo "::error::$form needs a file and there is none."
+            echo "Either upload it in FlavorFlow (project → Play forms → $input),"
+            echo "or pass a path to it: data-safety-csv: path/to/file.csv"
+            exit 1
           fi
           dest="$RUNNER_TEMP/$input.$ext"
           jq -r '.data.content' <<<"$body" > "$dest"
@@ -434,6 +451,34 @@ runs:
         # is multi-line and outputs mangle that.
         printf '%s' "$params" > "$RUNNER_TEMP/form-file-params.txt"
 
+    # One place decides where the Data safety CSV comes from: an explicit path
+    # beats the upload, so a repository copy can be used without touching the
+    # project, and neither is required as long as one exists.
+    - name: Resolve the Data safety CSV
+      id: csv
+      if: inputs.form != '' || inputs.publish-to-production == 'true'
+      shell: bash
+      env:
+        FORM_PARAMS: ${{ inputs.form-params }}
+        EXPLICIT: ${{ inputs.data-safety-csv }}
+      run: |
+        set -euo pipefail
+        # data-safety-csv is sugar for the form-param of the same meaning; both
+        # are accepted so an existing caller keeps working.
+        path="${EXPLICIT:-}"
+        if [ -z "$path" ]; then
+          path=$(printf '%s\n' "$FORM_PARAMS" | sed -n 's/^[[:space:]]*csv_file=//p' | head -1)
+        fi
+        if [ -n "$path" ] && [ ! -f "$path" ]; then
+          echo "::error::A Data safety CSV path was given but no file is there: '$path'."
+          echo "It is read on this runner — check the repository was checked out first."
+          exit 1
+        fi
+        if [ -n "$path" ]; then
+          echo "Data safety CSV from the caller: $path ($(wc -c <"$path" | tr -d ' ') bytes)"
+        fi
+        echo "path=$path" >> "$GITHUB_OUTPUT"
+
     - name: Check the project can actually publish
       if: inputs.form != '' || inputs.publish-to-production == 'true'
       shell: bash
@@ -441,6 +486,7 @@ runs:
         API_KEY: ${{ inputs.api-key }}
         FORM_PARAMS: ${{ inputs.form-params }}
         ANSWERS: ${{ steps.answers.outputs.path }}
+        CSV_PATH: ${{ steps.csv.outputs.path }}
       run: |
         set -euo pipefail
         url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/publish-readiness"
@@ -448,6 +494,12 @@ runs:
         if [ -z "$body" ]; then
           echo "::warning::Could not check publish readiness — continuing."
           exit 0
+        fi
+        # A caller-supplied CSV answers Data safety just as an upload does, so
+        # do not hold a run back for a file it already has.
+        if [ -n "${CSV_PATH:-}" ]; then
+          body=$(jq '.data.missing = [(.data.missing // [])[] | select(.id != "data_privacy_security")]' <<<"$body")
+          body=$(jq '.data.ready = ((.data.missing // []) | length == 0)' <<<"$body")
         fi
         missing=$(jq -r '(.data.missing // []) | map(.label) | join(", ")' <<<"$body")
         if [ -n "$missing" ]; then
@@ -516,16 +568,20 @@ runs:
         [ -n "$app_id" ] && args+=(--app-id "$app_id")
         [ -n "${{ steps.answers.outputs.path }}" ] && args+=(--answers "${{ steps.answers.outputs.path }}")
         [ -n "${{ inputs.notify-webhook }}" ] && args+=(--notify-webhook "${{ inputs.notify-webhook }}")
-        while IFS= read -r pair; do
-          [ -n "$pair" ] && args+=(--param "$pair")
-        done <<< "$FORM_PARAMS"
-        # Files fetched from FlavorFlow, added after the caller's params so an
-        # explicit path still wins.
+        # Uploaded files first, then the caller's params: the runner keeps the
+        # last --param for a given key, so this is what makes an explicit path
+        # win over the upload. The comment previously claimed the opposite
+        # order did that, and it did not.
         if [ -f "$RUNNER_TEMP/form-file-params.txt" ]; then
           while IFS= read -r pair; do
             [ -n "$pair" ] && args+=(--param "$pair")
           done < "$RUNNER_TEMP/form-file-params.txt"
         fi
+        while IFS= read -r pair; do
+          [ -n "$pair" ] && args+=(--param "$pair")
+        done <<< "$FORM_PARAMS"
+        # The named input is sugar for csv_file, applied last so it beats both.
+        [ -n "${{ steps.csv.outputs.path }}" ] && args+=(--param "csv_file=${{ steps.csv.outputs.path }}")
         keep_awake=()
         command -v caffeinate >/dev/null 2>&1 && keep_awake=(caffeinate -d -i)
 
