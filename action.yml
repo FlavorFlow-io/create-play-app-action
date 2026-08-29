@@ -298,10 +298,14 @@ runs:
         name=$(jq -r '.app_name // .name' <<<"$client")
         pkg=$(jq -r '.package_name // ""' <<<"$client")
         email=$(jq -r '.contact_email // ""' <<<"$client")
+        phone=$(jq -r '.contact_phone // ""' <<<"$client")
+        website=$(jq -r '.contact_website // ""' <<<"$client")
         [ -n "${{ inputs.app-name }}" ] && name="${{ inputs.app-name }}"
         echo "app_name=$name" >> "$GITHUB_OUTPUT"
         echo "package_name=$pkg" >> "$GITHUB_OUTPUT"
         echo "contact_email=$email" >> "$GITHUB_OUTPUT"
+        echo "contact_phone=$phone" >> "$GITHUB_OUTPUT"
+        echo "contact_website=$website" >> "$GITHUB_OUTPUT"
         echo "Client: $name ($pkg) <${email:-no support email}>"
 
     - name: Fetch the store-listing template
@@ -538,6 +542,13 @@ runs:
         # runner refuses the form rather than typing a placeholder into a listing.
         [ -n "${{ steps.client.outputs.contact_email }}" ] && \
           args+=(--param "contact_email=${{ steps.client.outputs.contact_email }}")
+        # Play's listing asks for all three together, and the store settings
+        # form has a field for each. Empty ones are simply not passed, and the
+        # form leaves those fields alone.
+        [ -n "${{ steps.client.outputs.contact_phone }}" ] && \
+          args+=(--param "contact_phone=${{ steps.client.outputs.contact_phone }}")
+        [ -n "${{ steps.client.outputs.contact_website }}" ] && \
+          args+=(--param "contact_website=${{ steps.client.outputs.contact_website }}")
         # Through the environment rather than expression interpolation: the full
         # description is multi-line, and interpolation pastes raw text straight
         # into the script — breaking it, and letting listing copy run as shell.
