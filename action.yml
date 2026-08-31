@@ -95,6 +95,15 @@ inputs:
       e.g. "listName=Internal testers\nemails=a@example.com"
     required: false
     default: ''
+  grant-service-account:
+    description: >-
+      After the app exists, give the workspace's linked Play service account
+      access to it. Off by default so the two invocations of this action in one
+      job do not both do it — set it on the one that creates the app. The
+      workspace's "Grant access to new client apps" setting still decides
+      whether it actually happens.
+    required: false
+    default: 'false'
   app-id:
     description: >-
       Play Console app id, when the app already exists. Creation is skipped and
@@ -516,6 +525,33 @@ runs:
 
         echo "Publish readiness: every required task has answers, and the files they need are uploaded."
 
+    - name: Look up the service account to grant
+      id: grant
+      if: inputs.grant-service-account == 'true'
+      shell: bash
+      env:
+        API_KEY: ${{ inputs.api-key }}
+      run: |
+        set -euo pipefail
+        url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/store-integration"
+        body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
+        email=''
+        if [ -z "$body" ]; then
+          echo "::warning::Could not read the store integration — not granting app access."
+        elif [ "$(jq -r '.data.grantNewApps' <<<"$body")" != "true" ]; then
+          echo "This workspace does not grant new apps automatically."
+        else
+          email=$(jq -r '.data.serviceAccountEmail // empty' <<<"$body")
+          if [ -z "$email" ]; then
+            # Not an error: a workspace can want this on and simply not have
+            # linked a key yet. Saying so beats silently doing nothing.
+            echo "::warning::No Play service account is linked to this workspace, so there is nothing to grant."
+          else
+            echo "Will grant app access to $email."
+          fi
+        fi
+        echo "email=$email" >> "$GITHUB_OUTPUT"
+
     - name: Run the Play Console forms
       id: forms
       if: inputs.form != '' || inputs.publish-to-production == 'true'
@@ -604,6 +640,15 @@ runs:
 
         if [ -n "${{ inputs.form }}" ]; then
           run_forms "${{ inputs.form }}"
+        fi
+
+        # After the app exists, so there is something to tick the boxes
+        # against. Re-running it is harmless: the form finds the app already
+        # listed and re-applies the same three permissions.
+        if [ -n "${{ steps.grant.outputs.email }}" ]; then
+          run_forms grant_app_permission_form \
+            --param "account=${{ steps.grant.outputs.email }}" \
+            --param "appName=${{ inputs.app-name }}"
         fi
 
         if [ "${{ inputs.publish-to-production }}" = "true" ]; then
