@@ -121,11 +121,13 @@ inputs:
     default: 'true'
   content-rating:
     description: >-
-      Pre-answer the IARC questionnaire. Only "no" is supported — the answer set
-      for an app with none of the rated content. Empty leaves it unanswered, and
-      the content-rating task then cannot complete.
+      Pre-answer the IARC questionnaire with "no" to everything, instead of
+      using the answers saved against the project. Only "no" is supported.
+      Off by default: these answers decide the age rating Google issues, so
+      they are the project's to give rather than this action's to assume. A
+      question nobody has answered now fails the run.
     required: false
-    default: 'no'
+    default: ''
   verify:
     description: >-
       After filling, print the console's own task list. A form reporting success
