@@ -259,6 +259,21 @@ runs:
     # The runner is a JVM program, and a self-hosted Mac has no JDK on PATH by
     # default — the launcher then fails with "Unable to locate a Java Runtime".
     # 17 matches the toolchain the distribution is built with.
+    - name: Work out the machine's real architecture
+      if: inputs.form != '' || inputs.publish-to-production == 'true'
+      id: hostarch
+      shell: bash
+      run: |
+        # Ask the hardware, not the process. `runner.arch` describes the runner
+        # agent — this one is the osx-x64 build on an Apple Silicon Mac, so it
+        # says X64 — and `uname -m` reports x86_64 under Rosetta, so both lie
+        # here. hw.optional.arm64 is a property of the CPU and cannot.
+        if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
+          echo "java=aarch64" >> "$GITHUB_OUTPUT"
+        else
+          echo "java=x64" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Set up Java
       if: inputs.form != '' || inputs.publish-to-production == 'true'
       uses: actions/setup-java@v5
@@ -272,7 +287,7 @@ runs:
         # second page into a sixty second one. The GPU is unaffected by Rosetta,
         # which is what made this look like anything but an architecture
         # problem.
-        architecture: ${{ runner.arch == 'ARM64' && 'aarch64' || 'x64' }}
+        architecture: ${{ steps.hostarch.outputs.java }}
 
     # The form runner is published as a release asset here rather than vendored:
     # it is a 47MB JVM distribution built from a private repo, so shipping the
