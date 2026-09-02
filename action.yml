@@ -265,6 +265,14 @@ runs:
       with:
         distribution: 'temurin'
         java-version: '17'
+        # Native, not the x64 build under Rosetta. Without this the runner got
+        # an x86-64 JVM on Apple Silicon, Selenium Manager then fetched the
+        # x86-64 chromedriver, and Chrome ran emulated: JavaScript about eleven
+        # times slower and DOM work forty times slower, which turned a two
+        # second page into a sixty second one. The GPU is unaffected by Rosetta,
+        # which is what made this look like anything but an architecture
+        # problem.
+        architecture: ${{ runner.arch == 'ARM64' && 'aarch64' || 'x64' }}
 
     # The form runner is published as a release asset here rather than vendored:
     # it is a 47MB JVM distribution built from a private repo, so shipping the
