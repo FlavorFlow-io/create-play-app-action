@@ -605,6 +605,29 @@ runs:
         fi
         echo "email=$email" >> "$GITHUB_OUTPUT"
 
+        # Whether the account can already see this app, asked before the forms
+        # run rather than after — so the grant can be part of the same pass and
+        # appear in the same table, instead of a second invocation reporting a
+        # summary of its own as though it were another job.
+        #
+        # An app that does not exist yet cannot be seen, which answers correctly
+        # for a new client: it will need granting.
+        needs_grant=""
+        if [ -n "$email" ]; then
+          pkg="${{ steps.client.outputs.package_name }}"
+          if [ -n "$pkg" ]; then
+            url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/store-integration/app-access?package_name=$pkg"
+            body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
+            [ -n "$body" ] && echo "Play access check: $(jq -r '.data.detail // "no detail"' <<<"$body")"
+            if [ "$(jq -r '.data.has_access // empty' <<<"${body:-}" 2>/dev/null || echo '')" = "true" ]; then
+              echo "::notice::$email can already see $pkg — nothing to grant."
+            else
+              needs_grant="yes"
+            fi
+          fi
+        fi
+        echo "needs_grant=$needs_grant" >> "$GITHUB_OUTPUT"
+
     - name: Run the Play Console forms
       id: forms
       if: inputs.form != '' || inputs.publish-to-production == 'true'
@@ -692,41 +715,16 @@ runs:
         }
 
         if [ -n "${{ inputs.form }}" ]; then
-          run_forms "${{ inputs.form }}"
-        fi
-
-        # After the app exists, so there is something to tick the boxes
-        # against. Re-running it is harmless: the form finds the app already
-        # listed and re-applies the same three permissions.
-        #
-        # Asked first, because an account can hold its permissions two ways.
-        # Granted app by app, a new app needs this form. Granted at the account
-        # level, every app is already covered the moment it exists and this
-        # form arranges what is already true — so the question is not which
-        # setting is on, it is whether the account can see the app.
-        if [ -n "${{ steps.grant.outputs.email }}" ]; then
-          pkg="${{ steps.client.outputs.package_name }}"
-          has_access=""
-          if [ -n "$pkg" ]; then
-            url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/store-integration/app-access?package_name=$pkg"
-            body=$(curl -fsS -H "Authorization: Bearer ${{ inputs.api-key }}" "$url" || echo '')
-            has_access=$(jq -r '.data.has_access // empty' <<<"${body:-}" 2>/dev/null || echo '')
-            [ -n "$body" ] && echo "Play access check: $(jq -r '.data.detail // "no detail"' <<<"$body")"
+          forms="${{ inputs.form }}"
+          # Appended, so it runs after the app exists and is reported beside the
+          # rest. "all" expands in place, so this keeps its position at the end.
+          if [ -n "${{ steps.grant.outputs.needs_grant }}" ]; then
+            forms="$forms,grant_app_permission_form"
           fi
-          if [ "$has_access" = "true" ]; then
-            echo "::notice::${{ steps.grant.outputs.email }} can already see $pkg — nothing to grant."
-          else
-            # Fatal, on purpose. This was a warning, on the reasoning that the
-            # app had been released either way — but a workspace whose service
-            # account cannot reach an app has an app FlavorFlow cannot read the
-            # status of, cannot release again without a person, and reports as
-            # having no Play access. A run that ends that way has not succeeded,
-            # and saying so in a warning meant every one of them went green.
-            run_forms grant_app_permission_form \
-              --param "account=${{ steps.grant.outputs.email }}" \
-              --param "appName=${{ steps.client.outputs.app_name || inputs.app-name }}" \
-              --param "packageName=${{ steps.client.outputs.package_name }}"
-          fi
+          run_forms "$forms" \
+            --param "account=${{ steps.grant.outputs.email }}" \
+            --param "appName=${{ steps.client.outputs.app_name || inputs.app-name }}" \
+            --param "packageName=${{ steps.client.outputs.package_name }}"
         fi
 
         if [ "${{ inputs.publish-to-production }}" = "true" ]; then
