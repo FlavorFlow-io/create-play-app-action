@@ -670,10 +670,32 @@ runs:
         # After the app exists, so there is something to tick the boxes
         # against. Re-running it is harmless: the form finds the app already
         # listed and re-applies the same three permissions.
+        #
+        # Asked first, because an account can hold its permissions two ways.
+        # Granted app by app, a new app needs this form. Granted at the account
+        # level, every app is already covered the moment it exists and this
+        # form arranges what is already true — so the question is not which
+        # setting is on, it is whether the account can see the app.
         if [ -n "${{ steps.grant.outputs.email }}" ]; then
-          run_forms grant_app_permission_form \
-            --param "account=${{ steps.grant.outputs.email }}" \
-            --param "appName=${{ inputs.app-name }}"
+          pkg="${{ steps.client.outputs.package_name }}"
+          has_access=""
+          if [ -n "$pkg" ]; then
+            url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/store-integration/app-access?package_name=$pkg"
+            body=$(curl -fsS -H "Authorization: Bearer ${{ inputs.api-key }}" "$url" || echo '')
+            has_access=$(jq -r '.data.has_access // empty' <<<"${body:-}" 2>/dev/null || echo '')
+            [ -n "$body" ] && echo "Play access check: $(jq -r '.data.detail // "no detail"' <<<"$body")"
+          fi
+          if [ "$has_access" = "true" ]; then
+            echo "::notice::${{ steps.grant.outputs.email }} can already see $pkg — nothing to grant."
+          else
+            # Not fatal. The app exists and has been released either way, and a
+            # permission that could not be granted is worth saying rather than
+            # throwing the release away.
+            run_forms grant_app_permission_form \
+              --param "account=${{ steps.grant.outputs.email }}" \
+              --param "appName=${{ inputs.app-name }}" \
+              || echo "::warning::Could not grant app access to ${{ steps.grant.outputs.email }} — grant it by hand in Play Console."
+          fi
         fi
 
         if [ "${{ inputs.publish-to-production }}" = "true" ]; then
