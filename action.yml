@@ -722,6 +722,7 @@ runs:
             run_forms grant_app_permission_form \
               --param "account=${{ steps.grant.outputs.email }}" \
               --param "appName=${{ steps.client.outputs.app_name || inputs.app-name }}" \
+              --param "packageName=${{ steps.client.outputs.package_name }}" \
               || echo "::warning::Could not grant app access to ${{ steps.grant.outputs.email }} — grant it by hand in Play Console."
           fi
         fi
