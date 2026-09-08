@@ -314,6 +314,34 @@ runs:
         echo "path=$dest/form-cli" >> "$GITHUB_OUTPUT"
         "$dest/form-cli" --list > /dev/null && echo "Form runner ready."
 
+    # Before anything expensive. Creating the app, filling fifteen forms and
+    # releasing it all end in one write — the app id and the version, recorded
+    # against the client — and a read-only key refuses that write at the very
+    # end, after the work is done and with nothing left to retry. Better to
+    # refuse to start.
+    - name: Check the API key can write
+      if: inputs.form != '' || inputs.publish-to-production == 'true'
+      shell: bash
+      env:
+        API_KEY: ${{ inputs.api-key }}
+      run: |
+        set -euo pipefail
+        url="${{ inputs.api-base-url }}/v1/key"
+        body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
+        if [ -z "$body" ]; then
+          # An older API without this endpoint, or an unreachable one. Not worth
+          # stopping a release over: the write at the end will say if it fails.
+          echo "::warning::Could not check what this API key can do — continuing."
+          exit 0
+        fi
+        if [ "$(jq -r '.data.can_write' <<<"$body")" != "true" ]; then
+          echo "::error::This API key is read-only, and the run ends by recording the app id and"
+          echo "version against the client. Use a key with write access"
+          echo "(FlavorFlow → API keys → create one with write scope) in the TEST_API_KEY secret."
+          exit 1
+        fi
+        echo "API key can write."
+
     - name: Resolve the client
       id: client
       if: inputs.form != '' || inputs.publish-to-production == 'true'
