@@ -721,7 +721,7 @@ runs:
             # throwing the release away.
             run_forms grant_app_permission_form \
               --param "account=${{ steps.grant.outputs.email }}" \
-              --param "appName=${{ inputs.app-name }}" \
+              --param "appName=${{ steps.client.outputs.app_name || inputs.app-name }}" \
               || echo "::warning::Could not grant app access to ${{ steps.grant.outputs.email }} — grant it by hand in Play Console."
           fi
         fi
