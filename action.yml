@@ -195,7 +195,7 @@ outputs:
     value: ${{ steps.create.outputs.created }}
   developer-id:
     description: 'Play Console developer id the app was created under'
-    value: ${{ steps.create.outputs.developer-id }}
+    value: ${{ steps.create.outputs.developer-id || steps.forms.outputs.developer-id }}
 
 runs:
   using: composite
