@@ -715,14 +715,15 @@ runs:
         }
 
         if [ -n "${{ inputs.form }}" ]; then
-          forms="${{ inputs.form }}"
-          # Appended, so it runs after the app exists and is reported beside the
-          # rest. "all" expands in place, so this keeps its position at the end.
-          if [ -n "${{ steps.grant.outputs.needs_grant }}" ]; then
-            forms="$forms,grant_app_permission_form"
-          fi
-          run_forms "$forms" \
-            --param "account=${{ steps.grant.outputs.email }}" \
+          # The account is what pulls the app-permission grant into "all": a form
+          # joins a full pass when everything it requires was supplied, and this
+          # one requires the account. So it is passed when the grant is wanted
+          # and withheld when it is not, rather than the form being named as a
+          # special case the next person to read this has to know about.
+          grant_account=""
+          [ -n "${{ steps.grant.outputs.needs_grant }}" ] && grant_account="${{ steps.grant.outputs.email }}"
+          run_forms "${{ inputs.form }}" \
+            --param "account=$grant_account" \
             --param "appName=${{ steps.client.outputs.app_name || inputs.app-name }}" \
             --param "packageName=${{ steps.client.outputs.package_name }}"
         fi
