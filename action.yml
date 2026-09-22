@@ -107,8 +107,8 @@ inputs:
   app-id:
     description: >-
       Play Console app id, when the app already exists. Creation is skipped and
-      the remaining forms run against it. Normally unnecessary — a created id is
-      remembered in state-dir — but needed to resume after a failed first run.
+      the remaining forms run against it. Normally unnecessary: the action saves
+      the id against the client in FlavorFlow and reads it back on later runs.
     required: false
     default: ''
   close-existing-chrome:
@@ -362,12 +362,14 @@ runs:
         email=$(jq -r '.contact_email // ""' <<<"$client")
         phone=$(jq -r '.contact_phone // ""' <<<"$client")
         website=$(jq -r '.contact_website // ""' <<<"$client")
+        play_app_id=$(jq -r '.play_app_id // ""' <<<"$client")
         [ -n "${{ inputs.app-name }}" ] && name="${{ inputs.app-name }}"
         echo "app_name=$name" >> "$GITHUB_OUTPUT"
         echo "package_name=$pkg" >> "$GITHUB_OUTPUT"
         echo "contact_email=$email" >> "$GITHUB_OUTPUT"
         echo "contact_phone=$phone" >> "$GITHUB_OUTPUT"
         echo "contact_website=$website" >> "$GITHUB_OUTPUT"
+        echo "play_app_id=$play_app_id" >> "$GITHUB_OUTPUT"
         echo "Client: $name ($pkg) <${email:-no support email}>"
 
     - name: Fetch the store-listing template
@@ -685,9 +687,13 @@ runs:
         [ "${{ inputs.verify }}" = "true" ] && args+=(--verify)
         [ -n "${{ inputs.content-rating }}" ] && args+=(--content-rating "${{ inputs.content-rating }}")
         [ -n "${{ inputs.state-dir }}" ] && args+=(--state-dir "${{ inputs.state-dir }}")
-        # Only from the legacy path; with `form` set the runner creates the app
-        # itself and resolves the id between forms.
+        # With `form` set the runner creates the app itself and resolves the id
+        # between forms. An id saved against the client by an earlier run is
+        # what lets a failed first run resume without being told the id.
         app_id="${{ inputs.app-id || steps.create.outputs.app-id }}"
+        if [ -z "$app_id" ] && [ "${{ inputs.force-create }}" != "true" ]; then
+          app_id="${{ steps.client.outputs.play_app_id }}"
+        fi
         [ -n "$app_id" ] && args+=(--app-id "$app_id")
         [ -n "${{ steps.answers.outputs.path }}" ] && args+=(--answers "${{ steps.answers.outputs.path }}")
         [ -n "${{ inputs.notify-webhook }}" ] && args+=(--notify-webhook "${{ inputs.notify-webhook }}")
@@ -743,3 +749,31 @@ runs:
       if: always() && (inputs.form != '' || inputs.publish-to-production == 'true')
       shell: bash
       run: rm -f "$RUNNER_TEMP/form-answers.json"
+
+    # So FlavorFlow knows which clients have an app, and a later run (or a
+    # replaced runner) finds it without driving a browser. A warning, not a
+    # failure: the app exists either way.
+    - name: Save the Play app id to FlavorFlow
+      if: always() && (steps.create.outputs.app-id != '' || steps.forms.outputs.app-id != '')
+      shell: bash
+      env:
+        API_KEY: ${{ inputs.api-key }}
+        APP_ID: ${{ steps.create.outputs.app-id || steps.forms.outputs.app-id }}
+        DEVELOPER_ID: ${{ steps.create.outputs.developer-id || steps.forms.outputs.developer-id }}
+      run: |
+        set -uo pipefail
+        if [ "$APP_ID" = "${{ steps.client.outputs.play_app_id }}" ]; then
+          echo "Play app id $APP_ID is already saved."
+          exit 0
+        fi
+        body=$(jq -n --arg app "$APP_ID" --arg dev "$DEVELOPER_ID" \
+          '{play_app_id: $app} + (if $dev != "" then {developer_id: $dev} else {} end)')
+        url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/clients/${{ inputs.client-id }}"
+        code=$(curl -sS -o "$RUNNER_TEMP/save-app-id.json" -w '%{http_code}' -X PUT \
+          -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
+          -d "$body" "$url")
+        if [ "$code" = "200" ] || [ "$code" = "201" ]; then
+          echo "Saved Play app id $APP_ID to the client."
+        else
+          echo "::warning::Could not save the Play app id (HTTP $code): $(cat "$RUNNER_TEMP/save-app-id.json")"
+        fi
