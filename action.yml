@@ -111,6 +111,14 @@ inputs:
       the id against the client in FlavorFlow and reads it back on later runs.
     required: false
     default: ''
+  version-name:
+    description: 'Version name of the released bundle, saved against the client'
+    required: false
+    default: ''
+  version-code:
+    description: 'Version code of the released bundle, saved against the client'
+    required: false
+    default: ''
   close-existing-chrome:
     description: >-
       Close a Chrome left holding the automation profile by a cancelled run,
@@ -750,30 +758,34 @@ runs:
       shell: bash
       run: rm -f "$RUNNER_TEMP/form-answers.json"
 
-    # So FlavorFlow knows which clients have an app, and a later run (or a
-    # replaced runner) finds it without driving a browser. A warning, not a
-    # failure: the app exists either way.
-    - name: Save the Play app id to FlavorFlow
+    # So FlavorFlow knows which clients have an app and which version is on
+    # Play, and a later run finds the app without driving a browser. A
+    # warning, not a failure: the app exists either way.
+    - name: Save the Play app and release to FlavorFlow
       if: always() && (steps.create.outputs.app-id != '' || steps.forms.outputs.app-id != '')
       shell: bash
       env:
         API_KEY: ${{ inputs.api-key }}
         APP_ID: ${{ steps.create.outputs.app-id || steps.forms.outputs.app-id }}
         DEVELOPER_ID: ${{ steps.create.outputs.developer-id || steps.forms.outputs.developer-id }}
+        VERSION_NAME: ${{ inputs.version-name }}
+        VERSION_CODE: ${{ inputs.version-code }}
       run: |
         set -uo pipefail
-        if [ "$APP_ID" = "${{ steps.client.outputs.play_app_id }}" ]; then
-          echo "Play app id $APP_ID is already saved."
-          exit 0
-        fi
         body=$(jq -n --arg app "$APP_ID" --arg dev "$DEVELOPER_ID" \
-          '{play_app_id: $app} + (if $dev != "" then {developer_id: $dev} else {} end)')
+          --arg name "$VERSION_NAME" --arg code "$VERSION_CODE" \
+          --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          '{play_app_id: $app}
+           + (if $dev != "" then {developer_id: $dev} else {} end)
+           + (if $code != "" then {last_release_version_name: $name,
+                                   last_release_version_code: ($code | tonumber),
+                                   last_release_submitted_at: $at} else {} end)')
         url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/clients/${{ inputs.client-id }}"
         code=$(curl -sS -o "$RUNNER_TEMP/save-app-id.json" -w '%{http_code}' -X PUT \
           -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
           -d "$body" "$url")
         if [ "$code" = "200" ] || [ "$code" = "201" ]; then
-          echo "Saved Play app id $APP_ID to the client."
+          echo "Saved $(jq -c . <<<"$body") to the client."
         else
           echo "::warning::Could not save the Play app id (HTTP $code): $(cat "$RUNNER_TEMP/save-app-id.json")"
         fi
