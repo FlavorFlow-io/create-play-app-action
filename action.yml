@@ -111,6 +111,21 @@ inputs:
       the id against the client in FlavorFlow and reads it back on later runs.
     required: false
     default: ''
+  bundle:
+    description: >-
+      The signed .aab to release, or a folder containing one. When the folder
+      also holds a release-info.json from the build, its version is saved
+      against the client.
+    required: false
+    default: ''
+  store-listing:
+    description: >-
+      Folder of store listing images, one subfolder per language:
+      <locale>/images/icon.png, <locale>/images/feature_graphic.png and
+      <locale>/images/phoneScreenshots/*.png. The icon is read from the
+      default language only.
+    required: false
+    default: ''
   version-name:
     description: 'Version name of the released bundle, saved against the client'
     required: false
@@ -530,6 +545,65 @@ runs:
     # One place decides where the Data safety CSV comes from: an explicit path
     # beats the upload, so a repository copy can be used without touching the
     # project, and neither is required as long as one exists.
+    # Turns the bundle and store-listing inputs into form params, so a caller
+    # passes two folders instead of building `key=path` lines itself.
+    - name: Collect the bundle and store listing files
+      id: files
+      if: inputs.form != '' || inputs.publish-to-production == 'true'
+      shell: bash
+      env:
+        BUNDLE: ${{ inputs.bundle }}
+        STORE_LISTING: ${{ inputs.store-listing }}
+        DEFAULT_LOCALE: ${{ inputs.default-language }}
+      run: |
+        set -euo pipefail
+        params=""
+        add() { params="${params}$1=$2"$'\n'; }
+        abs() { echo "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"; }
+
+        if [ -n "$BUNDLE" ]; then
+          aab="$BUNDLE"
+          [ -d "$aab" ] && aab=$(find "$aab" -name '*.aab' | head -1)
+          if [ -z "$aab" ] || [ ! -f "$aab" ]; then
+            echo "::error::No .aab found at '$BUNDLE'."
+            exit 1
+          fi
+          add aab "$(abs "$aab")"
+          info="$(dirname "$aab")/release-info.json"
+          [ -f "$info" ] || info=$(find "$(dirname "$aab")" "$BUNDLE" -name release-info.json 2>/dev/null | head -1 || true)
+          if [ -n "$info" ] && [ -f "$info" ]; then
+            echo "version_name=$(jq -r '.version_name // ""' "$info")" >> "$GITHUB_OUTPUT"
+            echo "version_code=$(jq -r '.version_code // ""' "$info")" >> "$GITHUB_OUTPUT"
+          fi
+        fi
+
+        if [ -n "$STORE_LISTING" ]; then
+          root=$(cd "$STORE_LISTING" 2>/dev/null && pwd || true)
+          if [ -z "$root" ]; then
+            echo "::warning::No store listing folder at '$STORE_LISTING'."
+          else
+            icon="$root/$DEFAULT_LOCALE/images/icon.png"
+            if [ -f "$icon" ]; then add app_icon "$icon"; else echo "::warning::No app icon at $icon."; fi
+            # A bare key answers the default listing; `key@<locale>` a translation.
+            for dir in "$root"/*/; do
+              [ -d "$dir" ] || continue
+              locale=$(basename "$dir")
+              suffix=""
+              [ "$locale" = "$DEFAULT_LOCALE" ] || suffix="@$locale"
+              [ -f "$dir/images/feature_graphic.png" ] && add "feature_graphic$suffix" "${dir}images/feature_graphic.png"
+              shots=$(find "$dir" -path '*phoneScreenshots*' -name '*.png' | sort | paste -sd, - || true)
+              if [ -n "$shots" ]; then
+                add "phone_screenshots$suffix" "$shots"
+              elif [ "$locale" = "$DEFAULT_LOCALE" ]; then
+                echo "::warning::No phone screenshots for $locale. Play requires at least two."
+              fi
+            done
+          fi
+        fi
+
+        printf 'Files for the forms:\n%s' "$params"
+        printf '%s' "$params" > "$RUNNER_TEMP/form-bundle-params.txt"
+
     - name: Resolve the Data safety CSV
       id: csv
       if: inputs.form != '' || inputs.publish-to-production == 'true'
@@ -709,11 +783,12 @@ runs:
         # last --param for a given key, so this is what makes an explicit path
         # win over the upload. The comment previously claimed the opposite
         # order did that, and it did not.
-        if [ -f "$RUNNER_TEMP/form-file-params.txt" ]; then
+        for f in "$RUNNER_TEMP/form-file-params.txt" "$RUNNER_TEMP/form-bundle-params.txt"; do
+          [ -f "$f" ] || continue
           while IFS= read -r pair; do
             [ -n "$pair" ] && args+=(--param "$pair")
-          done < "$RUNNER_TEMP/form-file-params.txt"
-        fi
+          done < "$f"
+        done
         while IFS= read -r pair; do
           [ -n "$pair" ] && args+=(--param "$pair")
         done <<< "$FORM_PARAMS"
@@ -756,7 +831,7 @@ runs:
     - name: Remove fetched answers
       if: always() && (inputs.form != '' || inputs.publish-to-production == 'true')
       shell: bash
-      run: rm -f "$RUNNER_TEMP/form-answers.json"
+      run: rm -f "$RUNNER_TEMP/form-answers.json" "$RUNNER_TEMP/form-bundle-params.txt"
 
     # So FlavorFlow knows which clients have an app and which version is on
     # Play, and a later run finds the app without driving a browser. A
@@ -768,8 +843,8 @@ runs:
         API_KEY: ${{ inputs.api-key }}
         APP_ID: ${{ steps.create.outputs.app-id || steps.forms.outputs.app-id }}
         DEVELOPER_ID: ${{ steps.create.outputs.developer-id || steps.forms.outputs.developer-id }}
-        VERSION_NAME: ${{ inputs.version-name }}
-        VERSION_CODE: ${{ inputs.version-code }}
+        VERSION_NAME: ${{ inputs.version-name || steps.files.outputs.version_name }}
+        VERSION_CODE: ${{ inputs.version-code || steps.files.outputs.version_code }}
       run: |
         set -uo pipefail
         body=$(jq -n --arg app "$APP_ID" --arg dev "$DEVELOPER_ID" \
