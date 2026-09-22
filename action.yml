@@ -95,15 +95,6 @@ inputs:
       e.g. "listName=Internal testers\nemails=a@example.com"
     required: false
     default: ''
-  grant-service-account:
-    description: >-
-      After the app exists, give the workspace's linked Play service account
-      access to it. Off by default so the two invocations of this action in one
-      job do not both do it — set it on the one that creates the app. The
-      workspace's "Grant access to new client apps" setting still decides
-      whether it actually happens.
-    required: false
-    default: 'false'
   app-id:
     description: >-
       Play Console app id, when the app already exists. Creation is skipped and
@@ -202,12 +193,6 @@ inputs:
       outside the workspace, which checkout wipes each run.
     required: false
     default: ''
-  cli-version:
-    description: >-
-      Release tag of the form-cli distribution to use. Defaults to the newest
-      release of this action repo.
-    required: false
-    default: 'latest'
 
 outputs:
   app-id:
@@ -321,16 +306,23 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
-        VERSION: ${{ inputs.cli-version }}
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
         dest="$RUNNER_TEMP/form-cli"
         rm -rf "$dest" && mkdir -p "$dest"
         repo="FlavorFlow-io/create-play-app-action"
-        if [ "$VERSION" = "latest" ]; then
-          gh release download --repo "$repo" --pattern 'form-cli.zip' --dir "$dest"
+        # The form runner is released with the action, under the same tag, so
+        # the version the workflow pins (uses: …@v1.2.3) decides both.
+        # action_path ends in that ref too, for when action_ref is empty.
+        ref="${ACTION_REF:-$(basename "$ACTION_PATH")}"
+        if [[ "$ref" =~ ^v[0-9] ]]; then
+          echo "Form runner $ref"
+          gh release download "$ref" --repo "$repo" --pattern 'form-cli.zip' --dir "$dest"
         else
-          gh release download "$VERSION" --repo "$repo" --pattern 'form-cli.zip' --dir "$dest"
+          echo "::notice::Action used at '$ref', not a release tag; using the latest form runner."
+          gh release download --repo "$repo" --pattern 'form-cli.zip' --dir "$dest"
         fi
         unzip -q "$dest/form-cli.zip" -d "$dest"
         chmod +x "$dest/form-cli"
@@ -662,9 +654,11 @@ runs:
 
         echo "Publish readiness: every required task has answers, and the files they need are uploaded."
 
+    # Granting follows the workspace's "Grant access to new client apps"
+    # setting in FlavorFlow (Store Integrations).
     - name: Look up the service account to grant
       id: grant
-      if: inputs.grant-service-account == 'true'
+      if: inputs.form != ''
       shell: bash
       env:
         API_KEY: ${{ inputs.api-key }}
