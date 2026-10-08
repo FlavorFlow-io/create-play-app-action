@@ -310,24 +310,30 @@ runs:
         ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
-        dest="$RUNNER_TEMP/form-cli"
+        dest="$RUNNER_TEMP/flavor-flow-play-automation"
         rm -rf "$dest" && mkdir -p "$dest"
         repo="FlavorFlow-io/create-play-app-action"
         # The form runner is released with the action, under the same tag, so
         # the version the workflow pins (uses: …@v1.2.3) decides both.
         # action_path ends in that ref too, for when action_ref is empty.
         ref="${ACTION_REF:-$(basename "$ACTION_PATH")}"
+        tag=()
         if [[ "$ref" =~ ^v[0-9] ]]; then
           echo "Form runner $ref"
-          gh release download "$ref" --repo "$repo" --pattern 'form-cli.zip' --dir "$dest"
+          tag=("$ref")
         else
           echo "::notice::Action used at '$ref', not a release tag; using the latest form runner."
-          gh release download --repo "$repo" --pattern 'form-cli.zip' --dir "$dest"
         fi
-        unzip -q "$dest/form-cli.zip" -d "$dest"
-        chmod +x "$dest/form-cli"
-        echo "path=$dest/form-cli" >> "$GITHUB_OUTPUT"
-        "$dest/form-cli" --list > /dev/null && echo "Form runner ready."
+        # Named flavor-flow-play-automation from v1.2.5; releases before it carry form-cli.
+        name=flavor-flow-play-automation
+        if ! gh release download ${tag[@]+"${tag[@]}"} --repo "$repo" --pattern "$name.zip" --dir "$dest" 2>/dev/null; then
+          name=form-cli
+          gh release download ${tag[@]+"${tag[@]}"} --repo "$repo" --pattern "$name.zip" --dir "$dest"
+        fi
+        unzip -q "$dest/$name.zip" -d "$dest"
+        chmod +x "$dest/$name"
+        echo "path=$dest/$name" >> "$GITHUB_OUTPUT"
+        "$dest/$name" --list > /dev/null && echo "Form runner ready."
 
     # Before anything expensive. Creating the app, filling fifteen forms and
     # releasing it all end in one write — the app id and the version, recorded

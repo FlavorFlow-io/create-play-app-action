@@ -120,7 +120,7 @@ private `google-play-automation` repo by its release process, so this repo stays
 public and consumers need no token:
 
 - `automation/` — the Play Console page flows used by app creation.
-- `form-cli.zip` — a release asset holding the headless form runner, downloaded
+- `flavor-flow-play-automation.zip` (`form-cli.zip` up to v1.2.4) — a release asset holding the headless form runner, downloaded
   on demand when `form` is set. It is the same interpreter and the same form
   JSON the desktop app uses, so the two cannot drift.
 
