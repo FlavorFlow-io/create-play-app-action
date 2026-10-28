@@ -337,7 +337,9 @@ runs:
         unzip -q "$dest/$name.zip" -d "$dest"
         chmod +x "$dest/$name"
         echo "path=$dest/$name" >> "$GITHUB_OUTPUT"
-        "$dest/$name" --list > /dev/null && echo "Form runner ready."
+        # --help, not --list: from v1.2 the runner reads its forms from FlavorFlow
+        # with the API key, and this step only proves it starts on this machine.
+        "$dest/$name" --help > /dev/null && echo "Form runner ready."
 
     # Before anything expensive. Creating the app, filling fifteen forms and
     # releasing it all end in one write — the app id and the version, recorded
