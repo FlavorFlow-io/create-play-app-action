@@ -207,6 +207,10 @@ outputs:
 
 runs:
   using: composite
+  # Every value a step uses reaches its script through env: and is read as
+  # "$VAR". Pasted into run: with ${{ }} it would be shell code — a client name
+  # like $(curl …|sh), which any project editor or API key holder can set, would
+  # run on a runner that holds a signed-in Google session.
   steps:
     # This action drives a real desktop browser against a signed-in Google
     # session, which a GitHub-hosted runner can be neither of.
@@ -345,9 +349,10 @@ runs:
       shell: bash
       env:
         API_KEY: ${{ inputs.api-key }}
+        IN_API_BASE_URL: ${{ inputs.api-base-url }}
       run: |
         set -euo pipefail
-        url="${{ inputs.api-base-url }}/v1/key"
+        url="${IN_API_BASE_URL}/v1/key"
         body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
         if [ -z "$body" ]; then
           # An older API without this endpoint, or an unreachable one. Not worth
@@ -369,12 +374,16 @@ runs:
       shell: bash
       env:
         API_KEY: ${{ inputs.api-key }}
+        IN_API_BASE_URL: ${{ inputs.api-base-url }}
+        IN_PROJECT_ID: ${{ inputs.project-id }}
+        IN_CLIENT_ID: ${{ inputs.client-id }}
+        IN_APP_NAME: ${{ inputs.app-name }}
       run: |
         set -euo pipefail
-        url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/clients"
+        url="${IN_API_BASE_URL}/v1/projects/${IN_PROJECT_ID}/clients"
         body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url")
-        client=$(jq -e --arg id "${{ inputs.client-id }}" '.data[] | select(.id==$id)' <<<"$body") || {
-          echo "::error::No client ${{ inputs.client-id }} in project ${{ inputs.project-id }}."
+        client=$(jq -e --arg id "${IN_CLIENT_ID}" '.data[] | select(.id==$id)' <<<"$body") || {
+          echo "::error::No client ${IN_CLIENT_ID} in project ${IN_PROJECT_ID}."
           jq -r '.data[] | "  \(.id)  \(.name)"' <<<"$body" >&2
           exit 1
         }
@@ -384,7 +393,7 @@ runs:
         phone=$(jq -r '.contact_phone // ""' <<<"$client")
         website=$(jq -r '.contact_website // ""' <<<"$client")
         play_app_id=$(jq -r '.play_app_id // ""' <<<"$client")
-        [ -n "${{ inputs.app-name }}" ] && name="${{ inputs.app-name }}"
+        [ -n "${IN_APP_NAME}" ] && name="${IN_APP_NAME}"
         echo "app_name=$name" >> "$GITHUB_OUTPUT"
         echo "package_name=$pkg" >> "$GITHUB_OUTPUT"
         echo "contact_email=$email" >> "$GITHUB_OUTPUT"
@@ -399,9 +408,11 @@ runs:
       shell: bash
       env:
         API_KEY: ${{ inputs.api-key }}
+        IN_API_BASE_URL: ${{ inputs.api-base-url }}
+        IN_PROJECT_ID: ${{ inputs.project-id }}
       run: |
         set -euo pipefail
-        url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/store-listing"
+        url="${IN_API_BASE_URL}/v1/projects/${IN_PROJECT_ID}/store-listing"
         body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
         if [ -z "$body" ] || [ "$(jq -r '.data' <<<"$body")" = "null" ]; then
           echo "::notice::No store-listing template on this project — store_listing_form will be skipped."
@@ -422,6 +433,10 @@ runs:
       shell: bash
       env:
         API_KEY: ${{ inputs.api-key }}
+        IN_API_BASE_URL: ${{ inputs.api-base-url }}
+        IN_PROJECT_ID: ${{ inputs.project-id }}
+        IN_CLIENT_ID: ${{ inputs.client-id }}
+        STEP_LISTING_SHORT: ${{ steps.listing.outputs.short }}
       run: |
         set -euo pipefail
         # Answers live on the project, so a human fills them once in the desktop
@@ -430,7 +445,7 @@ runs:
         # answers. The API resolves that — asking for the project's and merging
         # here would put a second implementation of the precedence rule on the
         # runner, free to disagree with the one the web app shows.
-        url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/form-answers?client_id=${{ inputs.client-id }}"
+        url="${IN_API_BASE_URL}/v1/projects/${IN_PROJECT_ID}/form-answers?client_id=${IN_CLIENT_ID}"
         body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
         if [ -z "$body" ] || [ "$(jq -r '.data' <<<"$body")" = "null" ]; then
           echo "::notice::No saved form answers for this project — the form runs with --param only."
@@ -445,7 +460,7 @@ runs:
           # Without a listing template there is nothing to write, and the store
           # listing form's answers are all placeholders — leaving it in would
           # fail the run on unresolved values rather than simply skipping it.
-          if [ -z "${{ steps.listing.outputs.short }}" ]; then
+          if [ -z "${STEP_LISTING_SHORT}" ]; then
             tmp=$(mktemp)
             jq 'del(.forms.store_listing_form)' "$RUNNER_TEMP/form-answers.json" > "$tmp" \
               && mv "$tmp" "$RUNNER_TEMP/form-answers.json"
@@ -464,35 +479,53 @@ runs:
       shell: bash
       env:
         FLAVORFLOW_API_KEY: ${{ inputs.api-key }}
+        IN_PROFILE_DIR: ${{ inputs.profile-dir }}
+        IN_API_BASE_URL: ${{ inputs.api-base-url }}
+        IN_PROJECT_ID: ${{ inputs.project-id }}
+        IN_CLIENT_ID: ${{ inputs.client-id }}
+        IN_DEFAULT_LANGUAGE: ${{ inputs.default-language }}
+        IN_APP_TYPE: ${{ inputs.app-type }}
+        IN_PRICING: ${{ inputs.pricing }}
+        IN_SESSION_TIMEOUT: ${{ inputs.session-timeout }}
+        IN_LOGIN_TIMEOUT: ${{ inputs.login-timeout }}
+        IN_NOTIFY_INTERVAL: ${{ inputs.notify-interval }}
+        IN_NOTIFY_WEBHOOK: ${{ inputs.notify-webhook }}
+        IN_NOTIFY_DESKTOP: ${{ inputs.notify-desktop }}
+        IN_APP_NAME: ${{ inputs.app-name }}
+        STEP_CHROME_BINARY: ${{ steps.chrome.outputs.binary }}
+        IN_HEADLESS: ${{ inputs.headless }}
+        IN_DRY_RUN: ${{ inputs.dry-run }}
+        STEP_VENV_PYTHON: ${{ steps.venv.outputs.python }}
       run: |
         set -euo pipefail
-        profile_dir=$(eval echo "${{ inputs.profile-dir }}")
+        # A leading ~ means the runner's home; nothing else in the path is expanded or run.
+        profile_dir="${IN_PROFILE_DIR/#\~/$HOME}"
         args=(
-          --api-base "${{ inputs.api-base-url }}"
-          --project-id "${{ inputs.project-id }}"
-          --client-id "${{ inputs.client-id }}"
+          --api-base "${IN_API_BASE_URL}"
+          --project-id "${IN_PROJECT_ID}"
+          --client-id "${IN_CLIENT_ID}"
           --profile-dir "$profile_dir"
-          --default-language "${{ inputs.default-language }}"
-          --app-type "${{ inputs.app-type }}"
-          --pricing "${{ inputs.pricing }}"
-          --session-timeout "${{ inputs.session-timeout }}"
-          --login-timeout "${{ inputs.login-timeout }}"
-          --notify-interval "${{ inputs.notify-interval }}"
+          --default-language "${IN_DEFAULT_LANGUAGE}"
+          --app-type "${IN_APP_TYPE}"
+          --pricing "${IN_PRICING}"
+          --session-timeout "${IN_SESSION_TIMEOUT}"
+          --login-timeout "${IN_LOGIN_TIMEOUT}"
+          --notify-interval "${IN_NOTIFY_INTERVAL}"
         )
-        [ -n "${{ inputs.notify-webhook }}" ] && args+=(--notify-webhook "${{ inputs.notify-webhook }}")
-        [ "${{ inputs.notify-desktop }}" = "false" ] && args+=(--no-desktop-notify)
-        [ -n "${{ inputs.app-name }}" ] && args+=(--app-name "${{ inputs.app-name }}")
-        args+=(--chrome-binary "${{ steps.chrome.outputs.binary }}")
-        [ "${{ inputs.headless }}" = "true" ] && args+=(--headless)
-        [ "${{ inputs.dry-run }}" = "true" ] && args+=(--dry-run)
+        [ -n "${IN_NOTIFY_WEBHOOK}" ] && args+=(--notify-webhook "${IN_NOTIFY_WEBHOOK}")
+        [ "${IN_NOTIFY_DESKTOP}" = "false" ] && args+=(--no-desktop-notify)
+        [ -n "${IN_APP_NAME}" ] && args+=(--app-name "${IN_APP_NAME}")
+        args+=(--chrome-binary "${STEP_CHROME_BINARY}")
+        [ "${IN_HEADLESS}" = "true" ] && args+=(--headless)
+        [ "${IN_DRY_RUN}" = "true" ] && args+=(--dry-run)
         # Waiting for a sign-in can take half an hour, and an idle Mac sleeps
         # long before that — which drops the runner's connection and fails the
         # job with a network error that says nothing about sleep. caffeinate
         # holds both idle and display assertions for exactly this command.
         keep_awake=()
         command -v caffeinate >/dev/null 2>&1 && keep_awake=(caffeinate -d -i)
-        "${keep_awake[@]}" "${{ steps.venv.outputs.python }}" "${{ github.action_path }}/ci_create_app.py" \
-          --repo-root "${{ github.action_path }}/automation" "${args[@]}"
+        "${keep_awake[@]}" "${STEP_VENV_PYTHON}" "${GITHUB_ACTION_PATH}/ci_create_app.py" \
+          --repo-root "${GITHUB_ACTION_PATH}/automation" "${args[@]}"
 
     # Stop before the browser, not after. A run that creates an app and then
     # cannot complete it leaves a half-configured app behind that has to be
@@ -508,6 +541,8 @@ runs:
         API_KEY: ${{ inputs.api-key }}
         ANSWERS: ${{ steps.answers.outputs.path }}
         CSV_PATH: ${{ steps.csv.outputs.path }}
+        IN_API_BASE_URL: ${{ inputs.api-base-url }}
+        IN_PROJECT_ID: ${{ inputs.project-id }}
       run: |
         set -euo pipefail
         params=""
@@ -519,7 +554,7 @@ runs:
           if [ "$input" = "csv_file" ] && [ -n "${CSV_PATH:-}" ]; then continue; fi
           [ -n "${ANSWERS:-}" ] || continue
           jq -e ".forms.\"$form\"" "$ANSWERS" >/dev/null 2>&1 || continue
-          url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/form-files/$input"
+          url="${IN_API_BASE_URL}/v1/projects/${IN_PROJECT_ID}/form-files/$input"
           body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
           if [ -z "$body" ] || [ "$(jq -r '.data' <<<"$body")" = "null" ]; then
             # Neither source has it: no path was passed and nothing is uploaded.
@@ -635,9 +670,11 @@ runs:
         FORM_PARAMS: ${{ inputs.form-params }}
         ANSWERS: ${{ steps.answers.outputs.path }}
         CSV_PATH: ${{ steps.csv.outputs.path }}
+        IN_API_BASE_URL: ${{ inputs.api-base-url }}
+        IN_PROJECT_ID: ${{ inputs.project-id }}
       run: |
         set -euo pipefail
-        url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/publish-readiness"
+        url="${IN_API_BASE_URL}/v1/projects/${IN_PROJECT_ID}/publish-readiness"
         body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
         if [ -z "$body" ]; then
           echo "::warning::Could not check publish readiness — continuing."
@@ -668,9 +705,12 @@ runs:
       shell: bash
       env:
         API_KEY: ${{ inputs.api-key }}
+        IN_API_BASE_URL: ${{ inputs.api-base-url }}
+        IN_PROJECT_ID: ${{ inputs.project-id }}
+        STEP_CLIENT_PACKAGE_NAME: ${{ steps.client.outputs.package_name }}
       run: |
         set -euo pipefail
-        url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/store-integration"
+        url="${IN_API_BASE_URL}/v1/projects/${IN_PROJECT_ID}/store-integration"
         body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
         email=''
         if [ -z "$body" ]; then
@@ -698,9 +738,9 @@ runs:
         # for a new client: it will need granting.
         needs_grant=""
         if [ -n "$email" ]; then
-          pkg="${{ steps.client.outputs.package_name }}"
+          pkg="${STEP_CLIENT_PACKAGE_NAME}"
           if [ -n "$pkg" ]; then
-            url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/store-integration/app-access?package_name=$pkg"
+            url="${IN_API_BASE_URL}/v1/projects/${IN_PROJECT_ID}/store-integration/app-access?package_name=$pkg"
             body=$(curl -fsS -H "Authorization: Bearer $API_KEY" "$url" || echo '')
             [ -n "$body" ] && echo "Play access check: $(jq -r '.data.detail // "no detail"' <<<"$body")"
             if [ "$(jq -r '.data.has_access // empty' <<<"${body:-}" 2>/dev/null || echo '')" = "true" ]; then
@@ -724,27 +764,55 @@ runs:
         # pasted into the script text — and it has to be here at all, because
         # progress reporting needs it and this step had no API_KEY.
         API_KEY: ${{ inputs.api-key }}
+        IN_LOGIN_TIMEOUT: ${{ inputs.login-timeout }}
+        STEP_CLIENT_APP_NAME: ${{ steps.client.outputs.app_name }}
+        STEP_CLIENT_PACKAGE_NAME: ${{ steps.client.outputs.package_name }}
+        STEP_CLIENT_CONTACT_EMAIL: ${{ steps.client.outputs.contact_email }}
+        STEP_CLIENT_CONTACT_PHONE: ${{ steps.client.outputs.contact_phone }}
+        STEP_CLIENT_CONTACT_WEBSITE: ${{ steps.client.outputs.contact_website }}
+        IN_COUNTRIES: ${{ inputs.countries }}
+        IN_API_BASE_URL: ${{ inputs.api-base-url }}
+        IN_PROJECT_ID: ${{ inputs.project-id }}
+        IN_CLIENT_ID: ${{ inputs.client-id }}
+        IN_DEVELOPER_ID: ${{ inputs.developer-id }}
+        STEP_CHROME_BINARY: ${{ steps.chrome.outputs.binary }}
+        IN_CLOSE_EXISTING_CHROME: ${{ inputs.close-existing-chrome }}
+        IN_FORCE_CREATE: ${{ inputs.force-create }}
+        IN_VERIFY: ${{ inputs.verify }}
+        IN_CONTENT_RATING: ${{ inputs.content-rating }}
+        IN_STATE_DIR: ${{ inputs.state-dir }}
+        IN_APP_ID_OR_STEP_CREATE_APP_ID: ${{ inputs.app-id || steps.create.outputs.app-id }}
+        STEP_CLIENT_PLAY_APP_ID: ${{ steps.client.outputs.play_app_id }}
+        STEP_ANSWERS_PATH: ${{ steps.answers.outputs.path }}
+        IN_NOTIFY_WEBHOOK: ${{ inputs.notify-webhook }}
+        STEP_CSV_PATH: ${{ steps.csv.outputs.path }}
+        STEP_CLI_PATH: ${{ steps.cli.outputs.path }}
+        IN_FORM: ${{ inputs.form }}
+        STEP_GRANT_NEEDS_GRANT: ${{ steps.grant.outputs.needs_grant }}
+        STEP_GRANT_EMAIL: ${{ steps.grant.outputs.email }}
+        STEP_CLIENT_APP_NAME_OR_IN_APP_NAME: ${{ steps.client.outputs.app_name || inputs.app-name }}
+        IN_PUBLISH_TO_PRODUCTION: ${{ inputs.publish-to-production }}
       run: |
         set -euo pipefail
         # --form is not in here: production runs as a second invocation, and
         # "all" cannot simply have forms appended to it — it means "every form
         # the answers cover", not an entry in a list.
-        args=(--login-timeout "${{ inputs.login-timeout }}")
-        args+=(--app-name "${{ steps.client.outputs.app_name }}")
-        args+=(--param "app_name=${{ steps.client.outputs.app_name }}")
-        [ -n "${{ steps.client.outputs.package_name }}" ] && \
-          args+=(--param "package_name=${{ steps.client.outputs.package_name }}")
+        args=(--login-timeout "${IN_LOGIN_TIMEOUT}")
+        args+=(--app-name "${STEP_CLIENT_APP_NAME}")
+        args+=(--param "app_name=${STEP_CLIENT_APP_NAME}")
+        [ -n "${STEP_CLIENT_PACKAGE_NAME}" ] && \
+          args+=(--param "package_name=${STEP_CLIENT_PACKAGE_NAME}")
         # Resolves the {contact_email} the saved answers carry. Without it the
         # runner refuses the form rather than typing a placeholder into a listing.
-        [ -n "${{ steps.client.outputs.contact_email }}" ] && \
-          args+=(--param "contact_email=${{ steps.client.outputs.contact_email }}")
+        [ -n "${STEP_CLIENT_CONTACT_EMAIL}" ] && \
+          args+=(--param "contact_email=${STEP_CLIENT_CONTACT_EMAIL}")
         # Play's listing asks for all three together, and the store settings
         # form has a field for each. Empty ones are simply not passed, and the
         # form leaves those fields alone.
-        [ -n "${{ steps.client.outputs.contact_phone }}" ] && \
-          args+=(--param "contact_phone=${{ steps.client.outputs.contact_phone }}")
-        [ -n "${{ steps.client.outputs.contact_website }}" ] && \
-          args+=(--param "contact_website=${{ steps.client.outputs.contact_website }}")
+        [ -n "${STEP_CLIENT_CONTACT_PHONE}" ] && \
+          args+=(--param "contact_phone=${STEP_CLIENT_CONTACT_PHONE}")
+        [ -n "${STEP_CLIENT_CONTACT_WEBSITE}" ] && \
+          args+=(--param "contact_website=${STEP_CLIENT_CONTACT_WEBSITE}")
         # Through the environment rather than expression interpolation: the full
         # description is multi-line, and interpolation pastes raw text straight
         # into the script — breaking it, and letting listing copy run as shell.
@@ -752,33 +820,33 @@ runs:
           args+=(--param "short_description=$SHORT_DESCRIPTION")
           args+=(--param "full_description=$FULL_DESCRIPTION")
         fi
-        [ -n "${{ inputs.countries }}" ] && args+=(--param "countries=${{ inputs.countries }}")
+        [ -n "${IN_COUNTRIES}" ] && args+=(--param "countries=${IN_COUNTRIES}")
         # Report progress back to FlavorFlow as each form completes. The whole
         # run is one CI step, so without this there is nothing to look at for
         # twenty minutes but a spinner.
-        args+=(--progress-api "${{ inputs.api-base-url }}")
+        args+=(--progress-api "${IN_API_BASE_URL}")
         args+=(--progress-key "$API_KEY")
-        args+=(--progress-project "${{ inputs.project-id }}")
-        args+=(--progress-client "${{ inputs.client-id }}")
-        [ -n "${{ inputs.developer-id }}" ] && args+=(--developer-id "${{ inputs.developer-id }}")
+        args+=(--progress-project "${IN_PROJECT_ID}")
+        args+=(--progress-client "${IN_CLIENT_ID}")
+        [ -n "${IN_DEVELOPER_ID}" ] && args+=(--developer-id "${IN_DEVELOPER_ID}")
         # Already resolved for the python path; the runner needs it just as much,
         # since ChromeDriver cannot find Chrome on macOS by itself.
-        args+=(--chrome-binary "${{ steps.chrome.outputs.binary }}")
-        [ "${{ inputs.close-existing-chrome }}" = "true" ] && args+=(--close-existing-chrome)
-        [ "${{ inputs.force-create }}" = "true" ] && args+=(--force-create)
-        [ "${{ inputs.verify }}" = "true" ] && args+=(--verify)
-        [ -n "${{ inputs.content-rating }}" ] && args+=(--content-rating "${{ inputs.content-rating }}")
-        [ -n "${{ inputs.state-dir }}" ] && args+=(--state-dir "${{ inputs.state-dir }}")
+        args+=(--chrome-binary "${STEP_CHROME_BINARY}")
+        [ "${IN_CLOSE_EXISTING_CHROME}" = "true" ] && args+=(--close-existing-chrome)
+        [ "${IN_FORCE_CREATE}" = "true" ] && args+=(--force-create)
+        [ "${IN_VERIFY}" = "true" ] && args+=(--verify)
+        [ -n "${IN_CONTENT_RATING}" ] && args+=(--content-rating "${IN_CONTENT_RATING}")
+        [ -n "${IN_STATE_DIR}" ] && args+=(--state-dir "${IN_STATE_DIR}")
         # With `form` set the runner creates the app itself and resolves the id
         # between forms. An id saved against the client by an earlier run is
         # what lets a failed first run resume without being told the id.
-        app_id="${{ inputs.app-id || steps.create.outputs.app-id }}"
-        if [ -z "$app_id" ] && [ "${{ inputs.force-create }}" != "true" ]; then
-          app_id="${{ steps.client.outputs.play_app_id }}"
+        app_id="${IN_APP_ID_OR_STEP_CREATE_APP_ID}"
+        if [ -z "$app_id" ] && [ "${IN_FORCE_CREATE}" != "true" ]; then
+          app_id="${STEP_CLIENT_PLAY_APP_ID}"
         fi
         [ -n "$app_id" ] && args+=(--app-id "$app_id")
-        [ -n "${{ steps.answers.outputs.path }}" ] && args+=(--answers "${{ steps.answers.outputs.path }}")
-        [ -n "${{ inputs.notify-webhook }}" ] && args+=(--notify-webhook "${{ inputs.notify-webhook }}")
+        [ -n "${STEP_ANSWERS_PATH}" ] && args+=(--answers "${STEP_ANSWERS_PATH}")
+        [ -n "${IN_NOTIFY_WEBHOOK}" ] && args+=(--notify-webhook "${IN_NOTIFY_WEBHOOK}")
         # Uploaded files first, then the caller's params: the runner keeps the
         # last --param for a given key, so this is what makes an explicit path
         # win over the upload. The comment previously claimed the opposite
@@ -793,37 +861,37 @@ runs:
           [ -n "$pair" ] && args+=(--param "$pair")
         done <<< "$FORM_PARAMS"
         # The named input is sugar for csv_file, applied last so it beats both.
-        [ -n "${{ steps.csv.outputs.path }}" ] && args+=(--param "csv_file=${{ steps.csv.outputs.path }}")
+        [ -n "${STEP_CSV_PATH}" ] && args+=(--param "csv_file=${STEP_CSV_PATH}")
         keep_awake=()
         command -v caffeinate >/dev/null 2>&1 && keep_awake=(caffeinate -d -i)
 
         run_forms() {
           local forms="$1"; shift
           echo "--- running: $forms"
-          "${keep_awake[@]}" "${{ steps.cli.outputs.path }}" --form "$forms" "${args[@]}" "$@"
+          "${keep_awake[@]}" "${STEP_CLI_PATH}" --form "$forms" "${args[@]}" "$@"
         }
 
-        if [ -n "${{ inputs.form }}" ]; then
+        if [ -n "${IN_FORM}" ]; then
           # The account is what pulls the app-permission grant into "all": a form
           # joins a full pass when everything it requires was supplied, and this
           # one requires the account. So it is passed when the grant is wanted
           # and withheld when it is not, rather than the form being named as a
           # special case the next person to read this has to know about.
           grant_account=""
-          [ -n "${{ steps.grant.outputs.needs_grant }}" ] && grant_account="${{ steps.grant.outputs.email }}"
-          run_forms "${{ inputs.form }}" \
+          [ -n "${STEP_GRANT_NEEDS_GRANT}" ] && grant_account="${STEP_GRANT_EMAIL}"
+          run_forms "${IN_FORM}" \
             --param "account=$grant_account" \
-            --param "appName=${{ steps.client.outputs.app_name || inputs.app-name }}" \
-            --param "packageName=${{ steps.client.outputs.package_name }}"
+            --param "appName=${STEP_CLIENT_APP_NAME_OR_IN_APP_NAME}" \
+            --param "packageName=${STEP_CLIENT_PACKAGE_NAME}"
         fi
 
-        if [ "${{ inputs.publish-to-production }}" = "true" ]; then
+        if [ "${IN_PUBLISH_TO_PRODUCTION}" = "true" ]; then
           # Three forms, in this order: promote creates the production draft,
           # countries fills the one field a production release cannot go
           # without, and release rolls it out. The rollout itself is behind
           # --param publish_to_production, so passing the forms alone would
           # stop on the review page.
-          echo "::warning::Promoting ${{ steps.client.outputs.package_name }} to production. This is public and cannot be undone."
+          echo "::warning::Promoting ${STEP_CLIENT_PACKAGE_NAME} to production. This is public and cannot be undone."
           run_forms promote_to_production_form,production_countries_form,production_release_form \
             --param publish_to_production=1
         fi
@@ -845,6 +913,9 @@ runs:
         DEVELOPER_ID: ${{ steps.create.outputs.developer-id || steps.forms.outputs.developer-id }}
         VERSION_NAME: ${{ inputs.version-name || steps.files.outputs.version_name }}
         VERSION_CODE: ${{ inputs.version-code || steps.files.outputs.version_code }}
+        IN_API_BASE_URL: ${{ inputs.api-base-url }}
+        IN_PROJECT_ID: ${{ inputs.project-id }}
+        IN_CLIENT_ID: ${{ inputs.client-id }}
       run: |
         set -uo pipefail
         body=$(jq -n --arg app "$APP_ID" --arg dev "$DEVELOPER_ID" \
@@ -855,7 +926,7 @@ runs:
            + (if $code != "" then {last_release_version_name: $name,
                                    last_release_version_code: ($code | tonumber),
                                    last_release_submitted_at: $at} else {} end)')
-        url="${{ inputs.api-base-url }}/v1/projects/${{ inputs.project-id }}/clients/${{ inputs.client-id }}"
+        url="${IN_API_BASE_URL}/v1/projects/${IN_PROJECT_ID}/clients/${IN_CLIENT_ID}"
         code=$(curl -sS -o "$RUNNER_TEMP/save-app-id.json" -w '%{http_code}' -X PUT \
           -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
           -d "$body" "$url")
