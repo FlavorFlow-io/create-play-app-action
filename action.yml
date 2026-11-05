@@ -318,11 +318,12 @@ runs:
         rm -rf "$dest" && mkdir -p "$dest"
         repo="FlavorFlow-io/create-play-app-action"
         # The form runner is released with the action, under the same tag, so
-        # the version the workflow pins (uses: …@v1.2.3) decides both.
+        # the version the workflow pins (uses: …@v1.2.3) decides both. A moving
+        # ref like @v1 names no release, so it gets the latest.
         # action_path ends in that ref too, for when action_ref is empty.
         ref="${ACTION_REF:-$(basename "$ACTION_PATH")}"
         tag=()
-        if [[ "$ref" =~ ^v[0-9] ]]; then
+        if [[ "$ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
           echo "Form runner $ref"
           tag=("$ref")
         else
